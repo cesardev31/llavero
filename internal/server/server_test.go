@@ -63,3 +63,20 @@ func TestUnknownCommandReturnsError(t *testing.T) {
 		t.Fatalf("esperaba respuesta que empiece con ERR, obtuve %q", got)
 	}
 }
+
+func TestConcurrentConnections(t *testing.T) {
+	addr := startTestServer(t)
+
+	const n = 10
+	results := make(chan string, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			results <- sendCommand(t, addr, "PING")
+		}()
+	}
+	for i := 0; i < n; i++ {
+		if got := <-results; got != "PONG" {
+			t.Fatalf("conexión concurrente: esperaba PONG, obtuve %q", got)
+		}
+	}
+}
