@@ -1,8 +1,8 @@
 # Llavero
 
 Llavero es un almacén clave-valor en memoria escrito en Go, inspirado en Redis.
-Expone un servidor TCP con protocolo mini-RESP propio y soporta strings, listas,
-hashes, sets, TTL y snapshots a disco.
+Expone un servidor TCP con protocolo RESP2 y soporta strings, listas, hashes,
+sets, TTL, snapshots a disco y pub/sub.
 
 ## Ejecutar
 
@@ -23,6 +23,38 @@ go run ./cmd/llavero \
 - `-snapshot`: archivo usado para cargar al arrancar y guardar con `SAVE`.
   Si queda vacío, la persistencia queda desactivada.
 - `-save-interval`: intervalo de snapshot automático. `0` lo desactiva.
+
+## CLI
+
+Llavero incluye un cliente propio para enviar comandos al servidor:
+
+```bash
+go run ./cmd/llavero-cli PING
+go run ./cmd/llavero-cli SET saludo "hola mundo"
+go run ./cmd/llavero-cli GET saludo
+```
+
+La dirección por defecto es `127.0.0.1:6380`; se puede cambiar con `-addr`:
+
+```bash
+go run ./cmd/llavero-cli -addr 127.0.0.1:16380 PING
+```
+
+Sin argumentos entra en modo interactivo:
+
+```bash
+go run ./cmd/llavero-cli
+llavero> SET k v
+llavero> GET k
+llavero> quit
+```
+
+Para pub/sub, `SUBSCRIBE` queda leyendo mensajes hasta cortar el proceso:
+
+```bash
+go run ./cmd/llavero-cli SUBSCRIBE news
+go run ./cmd/llavero-cli PUBLISH news hola
+```
 
 ## Comandos
 
@@ -66,19 +98,20 @@ Persistencia:
 
 - `SAVE`
 
-## Protocolo mini-RESP
+Pub/sub:
 
-Una petición se envía como `*N\n` seguido de `N` partes `$len\n<bytes>\n`.
+- `SUBSCRIBE channel...`
+- `UNSUBSCRIBE [channel...]`
+- `PUBLISH channel message`
+
+## Protocolo RESP2
+
+Una petición se envía como `*N\r\n` seguido de `N` partes
+`$len\r\n<bytes>\r\n`.
 Ejemplo para `SET nombre cesar`:
 
 ```text
-*3
-$3
-SET
-$6
-nombre
-$5
-cesar
+*3\r\n$3\r\nSET\r\n$6\r\nnombre\r\n$5\r\ncesar\r\n
 ```
 
 Las respuestas usan prefijos estilo Redis: `+` para estado, `-` para error,
