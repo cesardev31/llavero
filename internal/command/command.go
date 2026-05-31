@@ -52,6 +52,17 @@ func NewDispatcherWithSave(save SaveFunc) *Dispatcher {
 	d.handlers["SISMEMBER"] = cmdSIsMember
 	d.handlers["SMEMBERS"] = cmdSMembers
 	d.handlers["SCARD"] = cmdSCard
+	d.handlers["INCR"] = cmdIncr
+	d.handlers["DECR"] = cmdDecr
+	d.handlers["INCRBY"] = cmdIncrBy
+	d.handlers["DECRBY"] = cmdDecrBy
+	d.handlers["MSET"] = cmdMSet
+	d.handlers["MGET"] = cmdMGet
+	d.handlers["SETNX"] = cmdSetNX
+	d.handlers["TYPE"] = cmdType
+	d.handlers["KEYS"] = cmdKeys
+	d.handlers["DBSIZE"] = cmdDBSize
+	d.handlers["FLUSHALL"] = cmdFlushAll
 	if save != nil {
 		d.handlers["SAVE"] = cmdSave(save)
 	}

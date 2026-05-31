@@ -201,3 +201,74 @@ func TestSaveCommand(t *testing.T) {
 		t.Fatal("SAVE con error debería dar ErrorReply")
 	}
 }
+
+func TestCounterCommands(t *testing.T) {
+	d := NewDispatcher()
+	s := store.New(16)
+	if r := dispatch(d, s, "INCR", "c"); r != (protocol.IntReply{N: 1}) {
+		t.Fatalf("INCR → %#v", r)
+	}
+	if r := dispatch(d, s, "INCRBY", "c", "9"); r != (protocol.IntReply{N: 10}) {
+		t.Fatalf("INCRBY → %#v", r)
+	}
+	if r := dispatch(d, s, "DECR", "c"); r != (protocol.IntReply{N: 9}) {
+		t.Fatalf("DECR → %#v", r)
+	}
+	if r := dispatch(d, s, "DECRBY", "c", "4"); r != (protocol.IntReply{N: 5}) {
+		t.Fatalf("DECRBY → %#v", r)
+	}
+	dispatch(d, s, "SET", "txt", "abc")
+	if _, ok := dispatch(d, s, "INCR", "txt").(protocol.ErrorReply); !ok {
+		t.Error("INCR sobre no-entero debería dar ErrorReply")
+	}
+}
+
+func TestMSetMGetSetNX(t *testing.T) {
+	d := NewDispatcher()
+	s := store.New(16)
+	if r := dispatch(d, s, "MSET", "a", "1", "b", "2"); r != (protocol.StatusReply{Msg: "OK"}) {
+		t.Fatalf("MSET → %#v", r)
+	}
+	r := dispatch(d, s, "MGET", "a", "nope", "b")
+	arr, ok := r.(protocol.ArrayReply)
+	if !ok || len(arr.Elems) != 3 {
+		t.Fatalf("MGET → %#v", r)
+	}
+	if b, ok := arr.Elems[0].(protocol.BulkReply); !ok || string(b.Value) != "1" {
+		t.Fatalf("MGET[0] → %#v", arr.Elems[0])
+	}
+	if b, ok := arr.Elems[1].(protocol.BulkReply); !ok || !b.Null {
+		t.Fatalf("MGET[1] (ausente) debería ser nulo → %#v", arr.Elems[1])
+	}
+	if r := dispatch(d, s, "SETNX", "a", "x"); r != (protocol.IntReply{N: 0}) {
+		t.Fatalf("SETNX existente → %#v", r)
+	}
+	if r := dispatch(d, s, "SETNX", "nueva", "x"); r != (protocol.IntReply{N: 1}) {
+		t.Fatalf("SETNX nueva → %#v", r)
+	}
+}
+
+func TestAdminCommands(t *testing.T) {
+	d := NewDispatcher()
+	s := store.New(16)
+	dispatch(d, s, "SET", "k", "v")
+	if r := dispatch(d, s, "TYPE", "k"); r != (protocol.StatusReply{Msg: "string"}) {
+		t.Fatalf("TYPE → %#v", r)
+	}
+	if r := dispatch(d, s, "TYPE", "nope"); r != (protocol.StatusReply{Msg: "none"}) {
+		t.Fatalf("TYPE inexistente → %#v", r)
+	}
+	if r := dispatch(d, s, "DBSIZE"); r != (protocol.IntReply{N: 1}) {
+		t.Fatalf("DBSIZE → %#v", r)
+	}
+	r := dispatch(d, s, "KEYS", "*")
+	if arr, ok := r.(protocol.ArrayReply); !ok || len(arr.Elems) != 1 {
+		t.Fatalf("KEYS * → %#v", r)
+	}
+	if r := dispatch(d, s, "FLUSHALL"); r != (protocol.StatusReply{Msg: "OK"}) {
+		t.Fatalf("FLUSHALL → %#v", r)
+	}
+	if r := dispatch(d, s, "DBSIZE"); r != (protocol.IntReply{N: 0}) {
+		t.Fatalf("DBSIZE tras FLUSHALL → %#v", r)
+	}
+}
