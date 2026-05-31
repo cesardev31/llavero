@@ -25,6 +25,9 @@ func NewDispatcher() *Dispatcher {
 	d.handlers["SET"] = cmdSet
 	d.handlers["DEL"] = cmdDel
 	d.handlers["EXISTS"] = cmdExists
+	d.handlers["EXPIRE"] = cmdExpire
+	d.handlers["TTL"] = cmdTTL
+	d.handlers["PERSIST"] = cmdPersist
 	return d
 }
 

@@ -59,3 +59,43 @@ func TestUnknownAndArity(t *testing.T) {
 		t.Errorf("SET con 1 arg debería dar ErrorReply")
 	}
 }
+
+func TestExpireTtlPersist(t *testing.T) {
+	d := NewDispatcher()
+	s := store.New(16)
+	dispatch(d, s, "SET", "k", "v")
+
+	// TTL de clave sin expiración → -1
+	if r := dispatch(d, s, "TTL", "k"); r != (protocol.IntReply{N: -1}) {
+		t.Fatalf("TTL sin expiración → %#v", r)
+	}
+	// EXPIRE existente → 1
+	if r := dispatch(d, s, "EXPIRE", "k", "100"); r != (protocol.IntReply{N: 1}) {
+		t.Fatalf("EXPIRE → %#v", r)
+	}
+	// TTL ahora ~100 (margen por el redondeo)
+	r := dispatch(d, s, "TTL", "k")
+	ir, ok := r.(protocol.IntReply)
+	if !ok || ir.N < 95 || ir.N > 100 {
+		t.Fatalf("TTL tras EXPIRE → %#v", r)
+	}
+	// PERSIST quita el TTL → 1
+	if r := dispatch(d, s, "PERSIST", "k"); r != (protocol.IntReply{N: 1}) {
+		t.Fatalf("PERSIST → %#v", r)
+	}
+	if r := dispatch(d, s, "TTL", "k"); r != (protocol.IntReply{N: -1}) {
+		t.Fatalf("TTL tras PERSIST → %#v", r)
+	}
+	// TTL de clave inexistente → -2
+	if r := dispatch(d, s, "TTL", "nope"); r != (protocol.IntReply{N: -2}) {
+		t.Fatalf("TTL inexistente → %#v", r)
+	}
+	// EXPIRE de clave inexistente → 0
+	if r := dispatch(d, s, "EXPIRE", "nope", "10"); r != (protocol.IntReply{N: 0}) {
+		t.Fatalf("EXPIRE inexistente → %#v", r)
+	}
+	// EXPIRE con segundos no numéricos → error
+	if _, ok := dispatch(d, s, "EXPIRE", "k", "abc").(protocol.ErrorReply); !ok {
+		t.Errorf("EXPIRE con segundos no numéricos debería dar ErrorReply")
+	}
+}
