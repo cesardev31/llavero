@@ -14,6 +14,7 @@ type client struct {
 	proto   protocol.Protocol
 	writeMu sync.Mutex
 	subs    map[string]struct{}
+	authed  bool
 }
 
 func newClient(conn net.Conn, proto protocol.Protocol) *client {

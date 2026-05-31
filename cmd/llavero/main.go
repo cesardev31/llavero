@@ -11,12 +11,19 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":6380", "dirección TCP de escucha")
+	addr := flag.String("addr", "127.0.0.1:6380", "dirección TCP de escucha")
 	snapshot := flag.String("snapshot", "llavero.snapshot", "archivo de snapshot; vacío desactiva persistencia")
 	saveInterval := flag.Duration("save-interval", 0, "intervalo de snapshot automático; 0 lo desactiva")
 	aof := flag.String("aof", "", "archivo append-only; vacío desactiva AOF")
 	aofSync := flag.String("aof-fsync", "always", "política fsync del AOF: always, everysec o no")
+	requirePass := flag.String("requirepass", "", "contraseña requerida para AUTH; también puede venir de LLAVERO_REQUIREPASS")
+	tlsCert := flag.String("tls-cert", "", "certificado TLS PEM; requiere -tls-key")
+	tlsKey := flag.String("tls-key", "", "llave TLS PEM; requiere -tls-cert")
 	flag.Parse()
+
+	if *requirePass == "" {
+		*requirePass = os.Getenv("LLAVERO_REQUIREPASS")
+	}
 
 	snapshotSet := false
 	flag.Visit(func(f *flag.Flag) {
@@ -34,6 +41,9 @@ func main() {
 		SaveInterval: *saveInterval,
 		AOFPath:      *aof,
 		AOFSync:      *aofSync,
+		AuthPassword: *requirePass,
+		TLSCertPath:  *tlsCert,
+		TLSKeyPath:   *tlsKey,
 	})
 	if err != nil {
 		log.Fatalf("no se pudo cargar snapshot: %v", err)

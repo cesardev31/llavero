@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"crypto/tls"
 	"errors"
 	"io"
 	"log"
@@ -36,6 +37,9 @@ type Server struct {
 	saveInterval time.Duration
 	aofPath      string
 	aofSync      persistence.FsyncPolicy
+	authPassword string
+	tlsCertPath  string
+	tlsKeyPath   string
 }
 
 // Options configura el servidor.
@@ -45,6 +49,9 @@ type Options struct {
 	SaveInterval time.Duration
 	AOFPath      string
 	AOFSync      string
+	AuthPassword string
+	TLSCertPath  string
+	TLSKeyPath   string
 }
 
 // New crea un servidor que escuchará en la dirección dada (p.ej. ":6380").
@@ -59,7 +66,7 @@ func New(addr string) *Server {
 // NewWithOptions crea un servidor y carga el snapshot si SnapshotPath existe.
 func NewWithOptions(opts Options) (*Server, error) {
 	if opts.Addr == "" {
-		opts.Addr = ":6380"
+		opts.Addr = "127.0.0.1:6380"
 	}
 	if opts.SnapshotPath != "" && opts.AOFPath != "" {
 		return nil, errors.New("snapshot y AOF no se pueden activar juntos todavía")
@@ -113,12 +120,31 @@ func NewWithOptions(opts Options) (*Server, error) {
 		saveInterval: opts.SaveInterval,
 		aofPath:      opts.AOFPath,
 		aofSync:      aofSync,
+		authPassword: opts.AuthPassword,
+		tlsCertPath:  opts.TLSCertPath,
+		tlsKeyPath:   opts.TLSKeyPath,
 	}, nil
 }
 
 // Listen abre el socket TCP. Debe llamarse antes de Serve.
 func (s *Server) Listen() error {
-	ln, err := net.Listen("tcp", s.addr)
+	if (s.tlsCertPath == "") != (s.tlsKeyPath == "") {
+		return errors.New("TLS requiere cert y key")
+	}
+	var ln net.Listener
+	var err error
+	if s.tlsCertPath != "" {
+		cert, err := tls.LoadX509KeyPair(s.tlsCertPath, s.tlsKeyPath)
+		if err != nil {
+			return err
+		}
+		ln, err = tls.Listen("tcp", s.addr, &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		})
+	} else {
+		ln, err = net.Listen("tcp", s.addr)
+	}
 	if err != nil {
 		return err
 	}
@@ -248,6 +274,13 @@ func (s *Server) handleConn(conn net.Conn) {
 // handleCommand enruta los comandos con estado de conexión (pub/sub) al
 // servidor y el resto al dispatcher.
 func (s *Server) handleCommand(c *client, cmd protocol.Command) protocol.Reply {
+	switch strings.ToUpper(cmd.Name) {
+	case "AUTH":
+		return s.cmdAuth(c, cmd.Args)
+	}
+	if s.authRequired(c) {
+		return protocol.ErrorReply{Msg: "NOAUTH Authentication required."}
+	}
 	switch strings.ToUpper(cmd.Name) {
 	case "SUBSCRIBE":
 		return s.cmdSubscribe(c, cmd.Args)

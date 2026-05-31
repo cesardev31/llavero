@@ -2,8 +2,15 @@ package server
 
 import (
 	"bufio"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"os"
 	"path/filepath"
@@ -316,6 +323,131 @@ func TestSaveWithoutSnapshotPathIsNoop(t *testing.T) {
 	if err := s.Save(); err != nil {
 		t.Fatalf("Save sin snapshotPath debería ser no-op, devolvió %v", err)
 	}
+}
+
+func TestAuthRequiresPasswordBeforeCommands(t *testing.T) {
+	s, addr := startTestServerWithOptions(t, Options{AuthPassword: "secreto"})
+	t.Cleanup(func() { s.Close() })
+
+	if got := sendCommand(t, addr, "GET", "k"); got != "-NOAUTH Authentication required." {
+		t.Fatalf("GET sin AUTH -> %q", got)
+	}
+	if got := sendCommand(t, addr, "AUTH", "mal"); got != "-ERR contraseña inválida" {
+		t.Fatalf("AUTH mal -> %q", got)
+	}
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial -> %v", err)
+	}
+	defer conn.Close()
+	w := bufio.NewWriter(conn)
+	r := bufio.NewReader(conn)
+
+	writeCmd(w, "AUTH", "secreto")
+	if got := readReply(t, r); len(got) != 1 || got[0] != "OK" {
+		t.Fatalf("AUTH correcto -> %v", got)
+	}
+	writeCmd(w, "SET", "k", "v")
+	if got := readReply(t, r); len(got) != 1 || got[0] != "OK" {
+		t.Fatalf("SET autenticado -> %v", got)
+	}
+	writeCmd(w, "GET", "k")
+	hdr, _ := r.ReadString('\n')
+	body, _ := r.ReadString('\n')
+	if strings.TrimRight(hdr, "\r\n") != "$1" || strings.TrimRight(body, "\r\n") != "v" {
+		t.Fatalf("GET autenticado -> %q %q", hdr, body)
+	}
+}
+
+func TestAuthNotRequiredByDefault(t *testing.T) {
+	addr := startTestServer(t)
+	if got := sendCommand(t, addr, "AUTH", "anything"); got != "-ERR AUTH no requerido" {
+		t.Fatalf("AUTH sin password configurado -> %q", got)
+	}
+	if got := sendCommand(t, addr, "PING"); got != "+PONG" {
+		t.Fatalf("PING sin AUTH -> %q", got)
+	}
+}
+
+func TestListenRejectsPartialTLSConfig(t *testing.T) {
+	s, err := NewWithOptions(Options{Addr: "127.0.0.1:0", TLSCertPath: "cert.pem"})
+	if err != nil {
+		t.Fatalf("NewWithOptions -> %v", err)
+	}
+	if err := s.Listen(); err == nil {
+		t.Fatal("Listen aceptó TLS sin key")
+	}
+}
+
+func TestTLSListener(t *testing.T) {
+	certPath, keyPath := writeTestCertificate(t)
+	s, addr := startTestServerWithOptions(t, Options{
+		TLSCertPath: certPath,
+		TLSKeyPath:  keyPath,
+	})
+	t.Cleanup(func() { s.Close() })
+
+	conn, err := tls.Dial("tcp", addr, &tls.Config{
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS12,
+	})
+	if err != nil {
+		t.Fatalf("TLS Dial -> %v", err)
+	}
+	defer conn.Close()
+
+	w := bufio.NewWriter(conn)
+	r := bufio.NewReader(conn)
+	writeCmd(w, "PING")
+	if got := readReply(t, r); len(got) != 1 || got[0] != "PONG" {
+		t.Fatalf("PING TLS -> %v", got)
+	}
+}
+
+func writeTestCertificate(t *testing.T) (string, string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey -> %v", err)
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("CreateCertificate -> %v", err)
+	}
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "server.crt")
+	keyPath := filepath.Join(dir, "server.key")
+	certFile, err := os.Create(certPath)
+	if err != nil {
+		t.Fatalf("Create cert -> %v", err)
+	}
+	if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
+		t.Fatalf("Encode cert -> %v", err)
+	}
+	if err := certFile.Close(); err != nil {
+		t.Fatalf("Close cert -> %v", err)
+	}
+	keyFile, err := os.Create(keyPath)
+	if err != nil {
+		t.Fatalf("Create key -> %v", err)
+	}
+	if err := pem.Encode(keyFile, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}); err != nil {
+		t.Fatalf("Encode key -> %v", err)
+	}
+	if err := keyFile.Close(); err != nil {
+		t.Fatalf("Close key -> %v", err)
+	}
+	return certPath, keyPath
 }
 
 func TestAOFRecoversWrites(t *testing.T) {

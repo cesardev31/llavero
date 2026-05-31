@@ -14,24 +14,36 @@ Flags disponibles:
 
 ```bash
 go run ./cmd/llavero \
-  -addr :6380 \
+  -addr 127.0.0.1:6380 \
   -snapshot llavero.snapshot \
   -save-interval 30s
 ```
 
-- `-addr`: dirección TCP de escucha.
+- `-addr`: dirección TCP de escucha. Por defecto escucha solo en
+  `127.0.0.1:6380`; usa una IP explícita o `:6380` solo si quieres exponerlo
+  fuera de localhost.
 - `-snapshot`: archivo usado para cargar al arrancar y guardar con `SAVE`.
   Si queda vacío, la persistencia queda desactivada.
 - `-save-interval`: intervalo de snapshot automático. `0` lo desactiva.
 - `-aof`: archivo append-only para recuperar escrituras confirmadas.
 - `-aof-fsync`: política de sincronización del AOF: `always`, `everysec` o
   `no`. Por defecto usa `always`.
+- `-requirepass`: contraseña requerida para `AUTH`; también puede venir de
+  `LLAVERO_REQUIREPASS`.
+- `-tls-cert` y `-tls-key`: habilitan TLS con certificado y llave PEM.
 
 Snapshot y AOF todavía son modos excluyentes. Si se usa `-aof` sin pasar
 `-snapshot`, el servidor desactiva el snapshot por defecto automáticamente:
 
 ```bash
 go run ./cmd/llavero -aof appendonly.aof -aof-fsync always
+```
+
+Ejemplo con autenticación:
+
+```bash
+LLAVERO_REQUIREPASS=secreto go run ./cmd/llavero
+go run ./cmd/llavero-cli -auth secreto PING
 ```
 
 ## CLI
@@ -48,6 +60,18 @@ La dirección por defecto es `127.0.0.1:6380`; se puede cambiar con `-addr`:
 
 ```bash
 go run ./cmd/llavero-cli -addr 127.0.0.1:16380 PING
+```
+
+Si el servidor exige `AUTH`, pasa `-auth`:
+
+```bash
+go run ./cmd/llavero-cli -auth secreto SET saludo "hola mundo"
+```
+
+Para servidores con TLS:
+
+```bash
+go run ./cmd/llavero-cli -tls -tls-skip-verify PING
 ```
 
 Sin argumentos entra en modo interactivo:
@@ -71,6 +95,7 @@ go run ./cmd/llavero-cli PUBLISH news hola
 Strings y TTL:
 
 - `PING [mensaje]`
+- `AUTH password`
 - `GET key`
 - `SET key value`
 - `DEL key...`

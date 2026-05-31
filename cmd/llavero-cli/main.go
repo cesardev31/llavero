@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -31,32 +32,56 @@ type reply struct {
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:6380", "dirección TCP de Llavero")
+	auth := flag.String("auth", "", "contraseña para AUTH antes del comando")
+	useTLS := flag.Bool("tls", false, "conectar usando TLS")
+	tlsSkipVerify := flag.Bool("tls-skip-verify", false, "aceptar certificados TLS no confiables")
+	tlsServerName := flag.String("tls-server-name", "", "nombre de servidor para verificar TLS")
 	flag.Parse()
+	opts := dialOptions{
+		addr:          *addr,
+		auth:          *auth,
+		tls:           *useTLS,
+		tlsSkipVerify: *tlsSkipVerify,
+		tlsServerName: *tlsServerName,
+	}
 
 	if flag.NArg() > 0 {
-		if err := runCommand(*addr, flag.Args()); err != nil {
+		if err := runCommand(opts, flag.Args()); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		return
 	}
-	if err := runInteractive(*addr, os.Stdin); err != nil {
+	if err := runInteractive(opts, os.Stdin); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func runCommand(addr string, args []string) error {
-	conn, err := net.Dial("tcp", addr)
+type dialOptions struct {
+	addr          string
+	auth          string
+	tls           bool
+	tlsSkipVerify bool
+	tlsServerName string
+}
+
+func runCommand(opts dialOptions, args []string) error {
+	conn, err := dial(opts)
 	if err != nil {
-		return fmt.Errorf("conectar a %s: %w", addr, err)
+		return err
 	}
 	defer conn.Close()
 
+	r := bufio.NewReader(conn)
+	if opts.auth != "" && !isAuth(args) {
+		if err := authenticate(conn, r, opts.auth); err != nil {
+			return err
+		}
+	}
 	if err := writeCommand(conn, args); err != nil {
 		return err
 	}
-	r := bufio.NewReader(conn)
 	if err := readAndPrint(r); err != nil {
 		return err
 	}
@@ -73,14 +98,19 @@ func runCommand(addr string, args []string) error {
 	return nil
 }
 
-func runInteractive(addr string, in io.Reader) error {
-	conn, err := net.Dial("tcp", addr)
+func runInteractive(opts dialOptions, in io.Reader) error {
+	conn, err := dial(opts)
 	if err != nil {
-		return fmt.Errorf("conectar a %s: %w", addr, err)
+		return err
 	}
 	defer conn.Close()
 
 	server := bufio.NewReader(conn)
+	if opts.auth != "" {
+		if err := authenticate(conn, server, opts.auth); err != nil {
+			return err
+		}
+	}
 	input := bufio.NewScanner(in)
 	for {
 		fmt.Print("llavero> ")
@@ -120,6 +150,44 @@ func runInteractive(addr string, in io.Reader) error {
 			}
 		}
 	}
+}
+
+func dial(opts dialOptions) (net.Conn, error) {
+	if !opts.tls {
+		conn, err := net.Dial("tcp", opts.addr)
+		if err != nil {
+			return nil, fmt.Errorf("conectar a %s: %w", opts.addr, err)
+		}
+		return conn, nil
+	}
+	conf := &tls.Config{
+		InsecureSkipVerify: opts.tlsSkipVerify,
+		ServerName:         opts.tlsServerName,
+		MinVersion:         tls.VersionTLS12,
+	}
+	conn, err := tls.Dial("tcp", opts.addr, conf)
+	if err != nil {
+		return nil, fmt.Errorf("conectar TLS a %s: %w", opts.addr, err)
+	}
+	return conn, nil
+}
+
+func authenticate(conn net.Conn, r *bufio.Reader, password string) error {
+	if err := writeCommand(conn, []string{"AUTH", password}); err != nil {
+		return err
+	}
+	rep, err := readReply(r)
+	if err != nil {
+		return err
+	}
+	if rep.kind == replyError {
+		return errors.New(rep.text)
+	}
+	return nil
+}
+
+func isAuth(args []string) bool {
+	return len(args) > 0 && strings.EqualFold(args[0], "AUTH")
 }
 
 func isSubscribe(args []string) bool {
