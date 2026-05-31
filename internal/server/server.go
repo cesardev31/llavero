@@ -5,19 +5,26 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
+	"time"
 
 	"llavero/internal/command"
 	"llavero/internal/protocol"
 	"llavero/internal/store"
 )
 
+// expireInterval es cada cuánto corre la expiración activa (como el cron de Redis).
+const expireInterval = 100 * time.Millisecond
+
 // Server es un servidor TCP de Llavero.
 type Server struct {
-	addr  string
-	ln    net.Listener
-	store *store.Store
-	disp  *command.Dispatcher
-	proto protocol.Protocol
+	addr      string
+	ln        net.Listener
+	store     *store.Store
+	disp      *command.Dispatcher
+	proto     protocol.Protocol
+	stop      chan struct{}
+	closeOnce sync.Once
 }
 
 // New crea un servidor que escuchará en la dirección dada (p.ej. ":6380").
@@ -27,6 +34,7 @@ func New(addr string) *Server {
 		store: store.New(256),
 		disp:  command.NewDispatcher(),
 		proto: protocol.MiniRESP{},
+		stop:  make(chan struct{}),
 	}
 }
 
@@ -48,22 +56,39 @@ func (s *Server) Addr() string {
 	return s.ln.Addr().String()
 }
 
-// Close cierra el socket de escucha.
+// Close detiene la expiración activa y cierra el socket. Es seguro llamarlo
+// varias veces (sync.Once protege el cierre del canal stop).
 func (s *Server) Close() error {
+	s.closeOnce.Do(func() { close(s.stop) })
 	if s.ln == nil {
 		return nil
 	}
 	return s.ln.Close()
 }
 
-// Serve acepta conexiones y lanza una goroutine por cada una.
+// Serve lanza la expiración activa y acepta conexiones (una goroutine por una).
 func (s *Server) Serve() error {
+	go s.expireLoop()
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
 			return err
 		}
 		go s.handleConn(conn)
+	}
+}
+
+// expireLoop ejecuta la expiración activa periódicamente hasta el cierre.
+func (s *Server) expireLoop() {
+	t := time.NewTicker(expireInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-t.C:
+			s.store.ActiveExpireCycle()
+		}
 	}
 }
 
