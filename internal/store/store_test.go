@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestSetThenGet(t *testing.T) {
@@ -66,4 +67,85 @@ func TestConcurrentAccess(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func TestSetClearsTTL(t *testing.T) {
+	s := New(16)
+	s.Set("k", []byte("v"))
+	s.Expire("k", 100*time.Second)
+	s.Set("k", []byte("v2")) // debe limpiar el TTL
+	_, exists, hasExpiry := s.TTL("k")
+	if !exists || hasExpiry {
+		t.Fatalf("tras Set, exists=%v hasExpiry=%v; quería exists=true hasExpiry=false", exists, hasExpiry)
+	}
+}
+
+func TestExpireAndTTL(t *testing.T) {
+	s := New(16)
+	s.Set("k", []byte("v"))
+	if !s.Expire("k", 100*time.Second) {
+		t.Fatal("Expire de clave existente devolvió false")
+	}
+	rem, exists, hasExpiry := s.TTL("k")
+	if !exists || !hasExpiry {
+		t.Fatalf("exists=%v hasExpiry=%v", exists, hasExpiry)
+	}
+	if rem <= 0 || rem > 100*time.Second {
+		t.Fatalf("restante fuera de rango: %v", rem)
+	}
+	if s.Expire("nope", time.Second) {
+		t.Fatal("Expire de clave inexistente devolvió true")
+	}
+}
+
+func TestLazyExpireOnGet(t *testing.T) {
+	s := New(16)
+	s.Set("k", []byte("v"))
+	s.Expire("k", -time.Second) // ya vencida
+	if _, ok := s.Get("k"); ok {
+		t.Fatal("Get devolvió una clave vencida")
+	}
+}
+
+func TestPersist(t *testing.T) {
+	s := New(16)
+	s.Set("k", []byte("v"))
+	s.Expire("k", 100*time.Second)
+	if !s.Persist("k") {
+		t.Fatal("Persist devolvió false con TTL presente")
+	}
+	if _, _, hasExpiry := s.TTL("k"); hasExpiry {
+		t.Fatal("seguía con expiración tras Persist")
+	}
+	if s.Persist("k") {
+		t.Fatal("Persist devolvió true sin TTL que quitar")
+	}
+}
+
+func TestActiveExpireCycleRemovesExpired(t *testing.T) {
+	s := New(1) // un solo shard para un test determinista
+	for i := 0; i < 50; i++ {
+		k := fmt.Sprintf("exp-%d", i)
+		s.Set(k, []byte("v"))
+		s.Expire(k, -time.Second) // todas vencidas
+	}
+	s.Set("vivo", []byte("v"))
+	s.Set("futuro", []byte("v"))
+	s.Expire("futuro", time.Hour)
+
+	s.ActiveExpireCycle()
+
+	total := 0
+	for _, sh := range s.shards {
+		total += len(sh.data)
+	}
+	if total != 2 {
+		t.Fatalf("tras la ronda quedaban %d claves, quería 2 (vivo y futuro)", total)
+	}
+	if _, ok := s.Get("vivo"); !ok {
+		t.Error("se borró una clave sin TTL")
+	}
+	if _, ok := s.Get("futuro"); !ok {
+		t.Error("se borró una clave con TTL futuro")
+	}
 }
