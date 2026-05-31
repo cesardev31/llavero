@@ -19,7 +19,10 @@ func cmdGet(s *store.Store, args [][]byte) protocol.Reply {
 	if len(args) != 1 {
 		return protocol.ErrorReply{Msg: "ERR GET requiere 1 argumento"}
 	}
-	v, ok := s.Get(string(args[0]))
+	v, ok, err := s.Get(string(args[0]))
+	if err != nil {
+		return protocol.ErrorReply{Msg: err.Error()}
+	}
 	if !ok {
 		return protocol.BulkReply{Null: true}
 	}
@@ -96,4 +99,13 @@ func cmdPersist(s *store.Store, args [][]byte) protocol.Reply {
 		return protocol.IntReply{N: 1}
 	}
 	return protocol.IntReply{N: 0}
+}
+
+// bulkArray convierte una lista de valores en un ArrayReply de bulks.
+func bulkArray(items [][]byte) protocol.Reply {
+	elems := make([]protocol.Reply, len(items))
+	for i, it := range items {
+		elems[i] = protocol.BulkReply{Value: it}
+	}
+	return protocol.ArrayReply{Elems: elems}
 }

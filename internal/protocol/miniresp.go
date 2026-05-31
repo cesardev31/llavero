@@ -110,6 +110,16 @@ func (MiniRESP) Encode(w io.Writer, reply Reply) error {
 		}
 		_, err := io.WriteString(w, "\n")
 		return err
+	case ArrayReply:
+		if _, err := fmt.Fprintf(w, "*%d\n", len(r.Elems)); err != nil {
+			return err
+		}
+		for _, el := range r.Elems {
+			if err := (MiniRESP{}).Encode(w, el); err != nil {
+				return err
+			}
+		}
+		return nil
 	default:
 		return fmt.Errorf("tipo de respuesta desconocido: %T", reply)
 	}

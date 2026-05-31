@@ -10,7 +10,7 @@ import (
 func TestSetThenGet(t *testing.T) {
 	s := New(16)
 	s.Set("k", []byte("v"))
-	got, ok := s.Get("k")
+	got, ok, _ := s.Get("k")
 	if !ok {
 		t.Fatal("Get no encontró la clave recién puesta")
 	}
@@ -21,7 +21,7 @@ func TestSetThenGet(t *testing.T) {
 
 func TestGetMissing(t *testing.T) {
 	s := New(16)
-	if _, ok := s.Get("nope"); ok {
+	if _, ok, _ := s.Get("nope"); ok {
 		t.Fatal("Get devolvió ok=true para clave inexistente")
 	}
 }
@@ -61,7 +61,7 @@ func TestConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			key := fmt.Sprintf("clave-%d", i)
 			s.Set(key, []byte("v"))
-			if _, ok := s.Get(key); !ok {
+			if _, ok, _ := s.Get(key); !ok {
 				t.Errorf("no encontró %s", key)
 			}
 		}(i)
@@ -102,7 +102,7 @@ func TestLazyExpireOnGet(t *testing.T) {
 	s := New(16)
 	s.Set("k", []byte("v"))
 	s.Expire("k", -time.Second) // ya vencida
-	if _, ok := s.Get("k"); ok {
+	if _, ok, _ := s.Get("k"); ok {
 		t.Fatal("Get devolvió una clave vencida")
 	}
 }
@@ -142,10 +142,10 @@ func TestActiveExpireCycleRemovesExpired(t *testing.T) {
 	if total != 2 {
 		t.Fatalf("tras la ronda quedaban %d claves, quería 2 (vivo y futuro)", total)
 	}
-	if _, ok := s.Get("vivo"); !ok {
+	if _, ok, _ := s.Get("vivo"); !ok {
 		t.Error("se borró una clave sin TTL")
 	}
-	if _, ok := s.Get("futuro"); !ok {
+	if _, ok, _ := s.Get("futuro"); !ok {
 		t.Error("se borró una clave con TTL futuro")
 	}
 }
@@ -154,7 +154,7 @@ func TestLazyExpireRemovesFromMap(t *testing.T) {
 	s := New(1)
 	s.Set("k", []byte("v"))
 	s.Expire("k", -time.Second) // ya vencida
-	if _, ok := s.Get("k"); ok {
+	if _, ok, _ := s.Get("k"); ok {
 		t.Fatal("Get devolvió una clave vencida")
 	}
 	// el Get debe haberla borrado del shard, no solo ocultado

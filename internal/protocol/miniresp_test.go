@@ -86,3 +86,25 @@ func TestEncodeReplies(t *testing.T) {
 		}
 	}
 }
+
+func TestEncodeArrayReply(t *testing.T) {
+	var buf bytes.Buffer
+	reply := ArrayReply{Elems: []Reply{
+		BulkReply{Value: []byte("a")},
+		BulkReply{Value: []byte("bb")},
+	}}
+	if err := (MiniRESP{}).Encode(&buf, reply); err != nil {
+		t.Fatalf("Encode error: %v", err)
+	}
+	if want := "*2\n$1\na\n$2\nbb\n"; buf.String() != want {
+		t.Errorf("Encode array = %q, quería %q", buf.String(), want)
+	}
+
+	buf.Reset()
+	if err := (MiniRESP{}).Encode(&buf, ArrayReply{}); err != nil {
+		t.Fatalf("Encode vacío error: %v", err)
+	}
+	if buf.String() != "*0\n" {
+		t.Errorf("array vacío = %q, quería \"*0\\n\"", buf.String())
+	}
+}

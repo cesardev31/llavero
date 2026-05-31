@@ -114,3 +114,64 @@ func TestExpireNegativeDeletesKey(t *testing.T) {
 		t.Fatalf("GET tras EXPIRE -1 debería ser bulk nulo, fue %#v", r)
 	}
 }
+
+func TestListCommands(t *testing.T) {
+	d := NewDispatcher()
+	s := store.New(16)
+	if r := dispatch(d, s, "RPUSH", "l", "a", "b"); r != (protocol.IntReply{N: 2}) {
+		t.Fatalf("RPUSH -> %#v", r)
+	}
+	r := dispatch(d, s, "LRANGE", "l", "0", "-1")
+	arr, ok := r.(protocol.ArrayReply)
+	if !ok || len(arr.Elems) != 2 {
+		t.Fatalf("LRANGE -> %#v", r)
+	}
+	if b, ok := arr.Elems[0].(protocol.BulkReply); !ok || string(b.Value) != "a" {
+		t.Fatalf("LRANGE[0] -> %#v", arr.Elems[0])
+	}
+	dispatch(d, s, "SET", "str", "v")
+	if _, ok := dispatch(d, s, "RPUSH", "str", "x").(protocol.ErrorReply); !ok {
+		t.Error("RPUSH sobre string debería dar ErrorReply")
+	}
+}
+
+func TestHashCommands(t *testing.T) {
+	d := NewDispatcher()
+	s := store.New(16)
+	if r := dispatch(d, s, "HSET", "h", "f", "v"); r != (protocol.IntReply{N: 1}) {
+		t.Fatalf("HSET -> %#v", r)
+	}
+	if r := dispatch(d, s, "HGET", "h", "f"); func() bool { b, ok := r.(protocol.BulkReply); return !ok || string(b.Value) != "v" }() {
+		t.Fatalf("HGET -> %#v", r)
+	}
+	r := dispatch(d, s, "HGETALL", "h")
+	if arr, ok := r.(protocol.ArrayReply); !ok || len(arr.Elems) != 2 {
+		t.Fatalf("HGETALL -> %#v", r)
+	}
+	dispatch(d, s, "SET", "str", "v")
+	if _, ok := dispatch(d, s, "HSET", "str", "f", "v").(protocol.ErrorReply); !ok {
+		t.Error("HSET sobre string debería dar ErrorReply")
+	}
+}
+
+func TestSetCommands(t *testing.T) {
+	d := NewDispatcher()
+	s := store.New(16)
+	if r := dispatch(d, s, "SADD", "s", "a", "b", "a"); r != (protocol.IntReply{N: 2}) {
+		t.Fatalf("SADD -> %#v", r)
+	}
+	if r := dispatch(d, s, "SISMEMBER", "s", "a"); r != (protocol.IntReply{N: 1}) {
+		t.Fatalf("SISMEMBER -> %#v", r)
+	}
+	if r := dispatch(d, s, "SCARD", "s"); r != (protocol.IntReply{N: 2}) {
+		t.Fatalf("SCARD -> %#v", r)
+	}
+	r := dispatch(d, s, "SMEMBERS", "s")
+	if arr, ok := r.(protocol.ArrayReply); !ok || len(arr.Elems) != 2 {
+		t.Fatalf("SMEMBERS -> %#v", r)
+	}
+	dispatch(d, s, "SET", "str", "v")
+	if _, ok := dispatch(d, s, "SADD", "str", "x").(protocol.ErrorReply); !ok {
+		t.Error("SADD sobre string debería dar ErrorReply")
+	}
+}

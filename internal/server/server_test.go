@@ -107,6 +107,32 @@ func TestGetReturnsFullValue(t *testing.T) {
 	}
 }
 
+func TestListCommandsOverTCP(t *testing.T) {
+	addr := startTestServer(t)
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial devolvió error: %v", err)
+	}
+	defer conn.Close()
+	w := bufio.NewWriter(conn)
+	r := bufio.NewReader(conn)
+
+	writeCmd(w, "RPUSH", "l", "a", "b")
+	if line, _ := r.ReadString('\n'); strings.TrimRight(line, "\r\n") != ":2" {
+		t.Fatalf("RPUSH -> %q", line)
+	}
+	writeCmd(w, "LRANGE", "l", "0", "-1")
+	for _, want := range []string{"*2", "$1", "a", "$1", "b"} {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatalf("leyendo LRANGE: %v", err)
+		}
+		if got := strings.TrimRight(line, "\r\n"); got != want {
+			t.Fatalf("LRANGE -> %q, quería %q", got, want)
+		}
+	}
+}
+
 func TestMalformedRequestGetsError(t *testing.T) {
 	addr := startTestServer(t)
 	conn, err := net.Dial("tcp", addr)

@@ -34,10 +34,15 @@ type BulkReply struct {
 	Null  bool
 }
 
+// ArrayReply es una respuesta de array (p.ej. LRANGE, SMEMBERS). Sus elementos
+// suelen ser BulkReply, pero puede anidar cualquier Reply.
+type ArrayReply struct{ Elems []Reply }
+
 func (StatusReply) isReply() {}
 func (ErrorReply) isReply()  {}
 func (IntReply) isReply()    {}
 func (BulkReply) isReply()   {}
+func (ArrayReply) isReply()  {}
 
 // Protocol abstrae la lectura de comandos y la escritura de respuestas.
 type Protocol interface {

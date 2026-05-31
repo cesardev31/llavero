@@ -1,18 +1,27 @@
 // Package store implementa un almacén clave-valor en memoria, dividido en
-// shards independientes para reducir la contención entre goroutines. Cada
-// entrada puede tener una expiración (TTL) opcional.
+// shards independientes. Cada entrada guarda un valor de uno de varios tipos
+// (string, lista, hash, set) y una expiración (TTL) opcional.
 package store
 
 import (
+	"errors"
 	"hash/fnv"
 	"sync"
 	"time"
 )
 
-// entry es el valor almacenado: bytes + una expiración opcional.
+// ErrWrongType se devuelve cuando una operación se aplica a una clave que
+// contiene un tipo de valor distinto al esperado (estilo WRONGTYPE de Redis).
+var ErrWrongType = errors.New("WRONGTYPE Operation against a key holding the wrong kind of value")
+
+// entry es el valor almacenado. value contiene uno de:
+//
+//	[]byte (string) | [][]byte (lista) | map[string][]byte (hash) |
+//	map[string]struct{} (set)
+//
 // Un expireAt cero significa "sin expiración".
 type entry struct {
-	value    []byte
+	value    any
 	expireAt time.Time
 }
 
@@ -25,6 +34,20 @@ func (e *entry) expired(now time.Time) bool {
 type shard struct {
 	mu   sync.RWMutex
 	data map[string]*entry
+}
+
+// liveEntry devuelve la entrada viva de key, borrando perezosamente si venció.
+// El caller debe tener tomado sh.mu en modo escritura, porque puede borrar.
+func (sh *shard) liveEntry(key string, now time.Time) (*entry, bool) {
+	e, ok := sh.data[key]
+	if !ok {
+		return nil, false
+	}
+	if e.expired(now) {
+		delete(sh.data, key)
+		return nil, false
+	}
+	return e, true
 }
 
 // Store reparte las claves entre N shards mediante hash(key) & mask.
@@ -63,7 +86,7 @@ func (s *Store) shardFor(key string) *shard {
 	return s.shards[h.Sum32()&s.mask]
 }
 
-// Set guarda o reemplaza el valor de una clave, limpiando cualquier TTL previo.
+// Set guarda un valor string, limpiando cualquier TTL o tipo previo.
 func (s *Store) Set(key string, val []byte) {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
@@ -71,35 +94,40 @@ func (s *Store) Set(key string, val []byte) {
 	sh.data[key] = &entry{value: val}
 }
 
-// Get devuelve el valor y si la clave existe. Si está vencida, la borra
-// (expiración perezosa) y la trata como inexistente.
-func (s *Store) Get(key string) ([]byte, bool) {
+// Get devuelve el valor string de una clave. exists=false si no existe;
+// error=ErrWrongType si la clave contiene un tipo que no es string.
+func (s *Store) Get(key string) (val []byte, exists bool, err error) {
 	sh := s.shardFor(key)
 	now := time.Now()
 
 	sh.mu.RLock()
 	e, ok := sh.data[key]
 	if ok && !e.expired(now) {
-		v := e.value
+		b, isStr := e.value.([]byte)
 		sh.mu.RUnlock()
-		return v, true
+		if !isStr {
+			return nil, false, ErrWrongType
+		}
+		return b, true, nil
 	}
 	sh.mu.RUnlock()
 
 	if ok {
-		// estaba vencida: borrarla con lock de escritura, re-comprobando
 		sh.mu.Lock()
 		if e2, ok2 := sh.data[key]; ok2 && e2.expired(time.Now()) {
 			delete(sh.data, key)
 		}
 		sh.mu.Unlock()
 	}
-	return nil, false
+	return nil, false, nil
 }
 
-// Exists indica si la clave existe (aplicando expiración perezosa).
+// Exists indica si la clave existe (de cualquier tipo, con expiración perezosa).
 func (s *Store) Exists(key string) bool {
-	_, ok := s.Get(key)
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	_, ok := sh.liveEntry(key, time.Now())
 	return ok
 }
 
@@ -123,11 +151,8 @@ func (s *Store) Expire(key string, d time.Duration) bool {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	e, ok := sh.data[key]
-	if !ok || e.expired(time.Now()) {
-		if ok {
-			delete(sh.data, key)
-		}
+	e, ok := sh.liveEntry(key, time.Now())
+	if !ok {
 		return false
 	}
 	e.expireAt = time.Now().Add(d)
@@ -139,11 +164,8 @@ func (s *Store) Persist(key string) bool {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	e, ok := sh.data[key]
-	if !ok || e.expired(time.Now()) {
-		if ok {
-			delete(sh.data, key)
-		}
+	e, ok := sh.liveEntry(key, time.Now())
+	if !ok {
 		return false
 	}
 	if e.expireAt.IsZero() {
@@ -158,13 +180,9 @@ func (s *Store) TTL(key string) (remaining time.Duration, exists bool, hasExpiry
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	e, ok := sh.data[key]
-	if !ok {
-		return 0, false, false
-	}
 	now := time.Now()
-	if e.expired(now) {
-		delete(sh.data, key)
+	e, ok := sh.liveEntry(key, now)
+	if !ok {
 		return 0, false, false
 	}
 	if e.expireAt.IsZero() {
