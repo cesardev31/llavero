@@ -99,3 +99,18 @@ func TestExpireTtlPersist(t *testing.T) {
 		t.Errorf("EXPIRE con segundos no numéricos debería dar ErrorReply")
 	}
 }
+
+func TestExpireNegativeDeletesKey(t *testing.T) {
+	d := NewDispatcher()
+	s := store.New(16)
+	dispatch(d, s, "SET", "k", "v")
+	// EXPIRE con segundos negativos: se aplica (:1) y la clave queda vencida
+	if r := dispatch(d, s, "EXPIRE", "k", "-1"); r != (protocol.IntReply{N: 1}) {
+		t.Fatalf("EXPIRE -1 → %#v", r)
+	}
+	// al leerla, debe estar ausente (bulk nulo)
+	r := dispatch(d, s, "GET", "k")
+	if b, ok := r.(protocol.BulkReply); !ok || !b.Null {
+		t.Fatalf("GET tras EXPIRE -1 debería ser bulk nulo, fue %#v", r)
+	}
+}

@@ -149,3 +149,16 @@ func TestActiveExpireCycleRemovesExpired(t *testing.T) {
 		t.Error("se borró una clave con TTL futuro")
 	}
 }
+
+func TestLazyExpireRemovesFromMap(t *testing.T) {
+	s := New(1)
+	s.Set("k", []byte("v"))
+	s.Expire("k", -time.Second) // ya vencida
+	if _, ok := s.Get("k"); ok {
+		t.Fatal("Get devolvió una clave vencida")
+	}
+	// el Get debe haberla borrado del shard, no solo ocultado
+	if n := len(s.shards[0].data); n != 0 {
+		t.Fatalf("la clave vencida seguía en el mapa: %d entradas", n)
+	}
+}
