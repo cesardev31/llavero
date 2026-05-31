@@ -11,20 +11,80 @@ import (
 
 func (s *Server) dispatchWithAOF(cmd protocol.Command) protocol.Reply {
 	logCmd, loggable := aofCommand(cmd)
+	if loggable && s.maxMemoryBytes > 0 {
+		s.mutationMu.Lock()
+		defer s.mutationMu.Unlock()
+		if s.memoryLimitExceeded(logCmd) {
+			return protocol.ErrorReply{Msg: "OOM command not allowed when used memory > maxmemory"}
+		}
+		return s.dispatchMutatingLocked(cmd, logCmd)
+	}
 	if s.aof == nil || !loggable {
 		return s.disp.Dispatch(s.store, cmd)
 	}
 
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
+	return s.dispatchMutatingLocked(cmd, logCmd)
+}
+
+func (s *Server) dispatchMutatingLocked(cmd, logCmd protocol.Command) protocol.Reply {
 	reply := s.disp.Dispatch(s.store, cmd)
 	if _, ok := reply.(protocol.ErrorReply); ok {
 		return reply
 	}
-	if err := s.aof.Append(logCmd); err != nil {
-		return protocol.ErrorReply{Msg: "ERR AOF " + err.Error()}
+	if s.aof != nil {
+		if err := s.aof.Append(logCmd); err != nil {
+			return protocol.ErrorReply{Msg: "ERR AOF " + err.Error()}
+		}
 	}
 	return reply
+}
+
+func (s *Server) memoryLimitExceeded(cmd protocol.Command) bool {
+	growth := estimatedGrowth(cmd)
+	if growth <= 0 {
+		return false
+	}
+	return s.store.ApproxMemory()+growth > s.maxMemoryBytes
+}
+
+func estimatedGrowth(cmd protocol.Command) int64 {
+	name := strings.ToUpper(cmd.Name)
+	args := cmd.Args
+	switch name {
+	case "SET", "SETNX":
+		if len(args) != 2 {
+			return 0
+		}
+		return int64(len(args[0]) + len(args[1]))
+	case "MSET":
+		return argsSize(args)
+	case "LPUSH", "RPUSH", "SADD":
+		return argsSize(args)
+	case "HSET":
+		return argsSize(args)
+	case "INCR", "DECR":
+		if len(args) != 1 {
+			return 0
+		}
+		return int64(len(args[0]) + 32)
+	case "INCRBY", "DECRBY":
+		if len(args) != 2 {
+			return 0
+		}
+		return int64(len(args[0]) + 32)
+	default:
+		return 0
+	}
+}
+
+func argsSize(args [][]byte) int64 {
+	var n int64
+	for _, arg := range args {
+		n += int64(len(arg))
+	}
+	return n
 }
 
 func aofCommand(cmd protocol.Command) (protocol.Command, bool) {

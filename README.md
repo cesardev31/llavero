@@ -31,6 +31,11 @@ go run ./cmd/llavero \
 - `-requirepass`: contraseña requerida para `AUTH`; también puede venir de
   `LLAVERO_REQUIREPASS`.
 - `-tls-cert` y `-tls-key`: habilitan TLS con certificado y llave PEM.
+- `-max-connections`: máximo de conexiones simultáneas. `0` lo desactiva.
+- `-read-timeout`: timeout de lectura por comando. `0` lo desactiva.
+- `-write-timeout`: timeout de escritura por respuesta/pubsub. `0` lo desactiva.
+- `-max-memory`: límite aproximado de bytes para claves y valores vivos. `0`
+  lo desactiva.
 
 Snapshot y AOF todavía son modos excluyentes. Si se usa `-aof` sin pasar
 `-snapshot`, el servidor desactiva el snapshot por defecto automáticamente:
@@ -44,6 +49,16 @@ Ejemplo con autenticación:
 ```bash
 LLAVERO_REQUIREPASS=secreto go run ./cmd/llavero
 go run ./cmd/llavero-cli -auth secreto PING
+```
+
+Ejemplo con límites de recursos:
+
+```bash
+go run ./cmd/llavero \
+  -max-connections 1000 \
+  -read-timeout 30s \
+  -write-timeout 5s \
+  -max-memory 1073741824
 ```
 
 ## CLI

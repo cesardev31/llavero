@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"llavero/internal/persistence"
+	"llavero/internal/protocol"
 	"llavero/internal/store"
 )
 
@@ -324,6 +326,115 @@ func TestSaveWithoutSnapshotPathIsNoop(t *testing.T) {
 		t.Fatalf("Save sin snapshotPath debería ser no-op, devolvió %v", err)
 	}
 }
+
+func TestMaxConnectionsRejectsExtraClients(t *testing.T) {
+	s, addr := startTestServerWithOptions(t, Options{MaxConnections: 1})
+	t.Cleanup(func() { s.Close() })
+
+	conn1, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial conn1 -> %v", err)
+	}
+	defer conn1.Close()
+
+	conn2, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial conn2 -> %v", err)
+	}
+	defer conn2.Close()
+	if err := conn2.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline -> %v", err)
+	}
+	line, err := bufio.NewReader(conn2).ReadString('\n')
+	if err != nil {
+		t.Fatalf("lectura conn2 -> %v", err)
+	}
+	if got := strings.TrimRight(line, "\r\n"); got != "-ERR max clients reached" {
+		t.Fatalf("conn2 -> %q", got)
+	}
+}
+
+func TestReadTimeoutClosesIdleClient(t *testing.T) {
+	s, addr := startTestServerWithOptions(t, Options{ReadTimeout: 20 * time.Millisecond})
+	t.Cleanup(func() { s.Close() })
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial -> %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline -> %v", err)
+	}
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		t.Fatalf("lectura timeout -> %v", err)
+	}
+	if !strings.HasPrefix(strings.TrimRight(line, "\r\n"), "-ERR") {
+		t.Fatalf("timeout -> %q", line)
+	}
+}
+
+func TestClientSendSetsWriteDeadline(t *testing.T) {
+	conn := &deadlineConn{}
+	c := newClient(conn, protocol.RESP{}, 50*time.Millisecond)
+	if err := c.send(protocol.StatusReply{Msg: "OK"}); err != nil {
+		t.Fatalf("send -> %v", err)
+	}
+	if !conn.writeDeadlineSet {
+		t.Fatal("send no fijó write deadline")
+	}
+	if got := conn.String(); got != "+OK\r\n" {
+		t.Fatalf("payload -> %q", got)
+	}
+}
+
+func TestMaxMemoryRejectsGrowingWrites(t *testing.T) {
+	s, addr := startTestServerWithOptions(t, Options{MaxMemoryBytes: 4})
+	t.Cleanup(func() { s.Close() })
+
+	if got := sendCommand(t, addr, "SET", "k", "v"); got != "+OK" {
+		t.Fatalf("SET pequeño -> %q", got)
+	}
+	if got := sendCommand(t, addr, "SET", "big", "12345"); got != "-OOM command not allowed when used memory > maxmemory" {
+		t.Fatalf("SET grande -> %q", got)
+	}
+	if got := sendCommand(t, addr, "GET", "big"); got != "$-1" {
+		t.Fatalf("GET big tras OOM -> %q", got)
+	}
+}
+
+func TestResourceLimitOptionsRejectNegativeValues(t *testing.T) {
+	if _, err := NewWithOptions(Options{MaxConnections: -1}); err == nil {
+		t.Fatal("MaxConnections negativo fue aceptado")
+	}
+	if _, err := NewWithOptions(Options{MaxMemoryBytes: -1}); err == nil {
+		t.Fatal("MaxMemoryBytes negativo fue aceptado")
+	}
+}
+
+type deadlineConn struct {
+	bytes.Buffer
+	writeDeadlineSet bool
+}
+
+func (c *deadlineConn) Read([]byte) (int, error)        { return 0, io.EOF }
+func (c *deadlineConn) Close() error                    { return nil }
+func (c *deadlineConn) LocalAddr() net.Addr             { return testAddr("local") }
+func (c *deadlineConn) RemoteAddr() net.Addr            { return testAddr("remote") }
+func (c *deadlineConn) SetDeadline(time.Time) error     { return nil }
+func (c *deadlineConn) SetReadDeadline(time.Time) error { return nil }
+func (c *deadlineConn) SetWriteDeadline(t time.Time) error {
+	if !t.IsZero() {
+		c.writeDeadlineSet = true
+	}
+	return nil
+}
+
+type testAddr string
+
+func (a testAddr) Network() string { return string(a) }
+func (a testAddr) String() string  { return string(a) }
 
 func TestAuthRequiresPasswordBeforeCommands(t *testing.T) {
 	s, addr := startTestServerWithOptions(t, Options{AuthPassword: "secreto"})

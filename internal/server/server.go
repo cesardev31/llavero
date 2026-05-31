@@ -23,35 +23,44 @@ const expireInterval = 100 * time.Millisecond
 
 // Server es un servidor TCP de Llavero.
 type Server struct {
-	addr         string
-	ln           net.Listener
-	store        *store.Store
-	disp         *command.Dispatcher
-	proto        protocol.Protocol
-	broker       *pubsub.Broker
-	aof          *persistence.AOF
-	mutationMu   sync.Mutex
-	stop         chan struct{}
-	closeOnce    sync.Once
-	snapshotPath string
-	saveInterval time.Duration
-	aofPath      string
-	aofSync      persistence.FsyncPolicy
-	authPassword string
-	tlsCertPath  string
-	tlsKeyPath   string
+	addr           string
+	ln             net.Listener
+	store          *store.Store
+	disp           *command.Dispatcher
+	proto          protocol.Protocol
+	broker         *pubsub.Broker
+	aof            *persistence.AOF
+	mutationMu     sync.Mutex
+	stop           chan struct{}
+	closeOnce      sync.Once
+	snapshotPath   string
+	saveInterval   time.Duration
+	aofPath        string
+	aofSync        persistence.FsyncPolicy
+	authPassword   string
+	tlsCertPath    string
+	tlsKeyPath     string
+	maxConns       int
+	connSlots      chan struct{}
+	readTimeout    time.Duration
+	writeTimeout   time.Duration
+	maxMemoryBytes int64
 }
 
 // Options configura el servidor.
 type Options struct {
-	Addr         string
-	SnapshotPath string
-	SaveInterval time.Duration
-	AOFPath      string
-	AOFSync      string
-	AuthPassword string
-	TLSCertPath  string
-	TLSKeyPath   string
+	Addr           string
+	SnapshotPath   string
+	SaveInterval   time.Duration
+	AOFPath        string
+	AOFSync        string
+	AuthPassword   string
+	TLSCertPath    string
+	TLSKeyPath     string
+	MaxConnections int
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
+	MaxMemoryBytes int64
 }
 
 // New crea un servidor que escuchará en la dirección dada (p.ej. ":6380").
@@ -70,6 +79,16 @@ func NewWithOptions(opts Options) (*Server, error) {
 	}
 	if opts.SnapshotPath != "" && opts.AOFPath != "" {
 		return nil, errors.New("snapshot y AOF no se pueden activar juntos todavía")
+	}
+	if opts.MaxConnections < 0 {
+		return nil, errors.New("MaxConnections no puede ser negativo")
+	}
+	if opts.MaxMemoryBytes < 0 {
+		return nil, errors.New("MaxMemoryBytes no puede ser negativo")
+	}
+	var connSlots chan struct{}
+	if opts.MaxConnections > 0 {
+		connSlots = make(chan struct{}, opts.MaxConnections)
 	}
 	st := store.New(256)
 	if opts.SnapshotPath != "" {
@@ -109,20 +128,25 @@ func NewWithOptions(opts Options) (*Server, error) {
 		})
 	}
 	return &Server{
-		addr:         opts.Addr,
-		store:        st,
-		disp:         disp,
-		proto:        protocol.RESP{},
-		broker:       pubsub.New(),
-		aof:          aof,
-		stop:         make(chan struct{}),
-		snapshotPath: opts.SnapshotPath,
-		saveInterval: opts.SaveInterval,
-		aofPath:      opts.AOFPath,
-		aofSync:      aofSync,
-		authPassword: opts.AuthPassword,
-		tlsCertPath:  opts.TLSCertPath,
-		tlsKeyPath:   opts.TLSKeyPath,
+		addr:           opts.Addr,
+		store:          st,
+		disp:           disp,
+		proto:          protocol.RESP{},
+		broker:         pubsub.New(),
+		aof:            aof,
+		stop:           make(chan struct{}),
+		snapshotPath:   opts.SnapshotPath,
+		saveInterval:   opts.SaveInterval,
+		aofPath:        opts.AOFPath,
+		aofSync:        aofSync,
+		authPassword:   opts.AuthPassword,
+		tlsCertPath:    opts.TLSCertPath,
+		tlsKeyPath:     opts.TLSKeyPath,
+		maxConns:       opts.MaxConnections,
+		connSlots:      connSlots,
+		readTimeout:    opts.ReadTimeout,
+		writeTimeout:   opts.WriteTimeout,
+		maxMemoryBytes: opts.MaxMemoryBytes,
 	}, nil
 }
 
@@ -205,8 +229,35 @@ func (s *Server) Serve() error {
 				return err
 			}
 		}
+		if !s.acquireConnSlot(conn) {
+			continue
+		}
 		go s.handleConn(conn)
 	}
+}
+
+func (s *Server) acquireConnSlot(conn net.Conn) bool {
+	if s.connSlots == nil {
+		return true
+	}
+	select {
+	case s.connSlots <- struct{}{}:
+		return true
+	default:
+		if s.writeTimeout > 0 {
+			_ = conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
+		}
+		_ = s.proto.Encode(conn, protocol.ErrorReply{Msg: "ERR max clients reached"})
+		_ = conn.Close()
+		return false
+	}
+}
+
+func (s *Server) releaseConnSlot() {
+	if s.connSlots == nil {
+		return
+	}
+	<-s.connSlots
 }
 
 // saveLoop guarda snapshots periódicos hasta el cierre.
@@ -243,7 +294,8 @@ func (s *Server) expireLoop() {
 // Un pánico aquí solo afecta a esta conexión, nunca al servidor.
 func (s *Server) handleConn(conn net.Conn) {
 	defer conn.Close()
-	c := newClient(conn, s.proto)
+	defer s.releaseConnSlot()
+	c := newClient(conn, s.proto, s.writeTimeout)
 	defer s.unsubscribeAll(c)
 	defer func() {
 		if r := recover(); r != nil {
@@ -253,6 +305,11 @@ func (s *Server) handleConn(conn net.Conn) {
 
 	reader := bufio.NewReader(conn)
 	for {
+		if s.readTimeout > 0 {
+			if err := conn.SetReadDeadline(time.Now().Add(s.readTimeout)); err != nil {
+				return
+			}
+		}
 		cmd, err := s.proto.Parse(reader)
 		if err != nil {
 			if err == io.EOF {

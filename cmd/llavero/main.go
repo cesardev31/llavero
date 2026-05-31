@@ -19,6 +19,10 @@ func main() {
 	requirePass := flag.String("requirepass", "", "contraseña requerida para AUTH; también puede venir de LLAVERO_REQUIREPASS")
 	tlsCert := flag.String("tls-cert", "", "certificado TLS PEM; requiere -tls-key")
 	tlsKey := flag.String("tls-key", "", "llave TLS PEM; requiere -tls-cert")
+	maxConnections := flag.Int("max-connections", 0, "máximo de conexiones simultáneas; 0 lo desactiva")
+	readTimeout := flag.Duration("read-timeout", 0, "timeout de lectura por comando; 0 lo desactiva")
+	writeTimeout := flag.Duration("write-timeout", 0, "timeout de escritura por respuesta/pubsub; 0 lo desactiva")
+	maxMemory := flag.Int64("max-memory", 0, "límite aproximado de memoria para claves/valores; 0 lo desactiva")
 	flag.Parse()
 
 	if *requirePass == "" {
@@ -36,14 +40,18 @@ func main() {
 	}
 
 	s, err := server.NewWithOptions(server.Options{
-		Addr:         *addr,
-		SnapshotPath: *snapshot,
-		SaveInterval: *saveInterval,
-		AOFPath:      *aof,
-		AOFSync:      *aofSync,
-		AuthPassword: *requirePass,
-		TLSCertPath:  *tlsCert,
-		TLSKeyPath:   *tlsKey,
+		Addr:           *addr,
+		SnapshotPath:   *snapshot,
+		SaveInterval:   *saveInterval,
+		AOFPath:        *aof,
+		AOFSync:        *aofSync,
+		AuthPassword:   *requirePass,
+		TLSCertPath:    *tlsCert,
+		TLSKeyPath:     *tlsKey,
+		MaxConnections: *maxConnections,
+		ReadTimeout:    *readTimeout,
+		WriteTimeout:   *writeTimeout,
+		MaxMemoryBytes: *maxMemory,
 	})
 	if err != nil {
 		log.Fatalf("no se pudo cargar snapshot: %v", err)

@@ -3,6 +3,7 @@ package server
 import (
 	"net"
 	"sync"
+	"time"
 
 	"llavero/internal/protocol"
 )
@@ -10,21 +11,28 @@ import (
 // client representa una conexión: escritura serializada + sus suscripciones.
 // El mapa subs solo se accede desde la goroutine de la conexión.
 type client struct {
-	conn    net.Conn
-	proto   protocol.Protocol
-	writeMu sync.Mutex
-	subs    map[string]struct{}
-	authed  bool
+	conn         net.Conn
+	proto        protocol.Protocol
+	writeTimeout time.Duration
+	writeMu      sync.Mutex
+	subs         map[string]struct{}
+	authed       bool
 }
 
-func newClient(conn net.Conn, proto protocol.Protocol) *client {
-	return &client{conn: conn, proto: proto, subs: make(map[string]struct{})}
+func newClient(conn net.Conn, proto protocol.Protocol, writeTimeout time.Duration) *client {
+	return &client{conn: conn, proto: proto, writeTimeout: writeTimeout, subs: make(map[string]struct{})}
 }
 
 // send serializa la escritura de una respuesta en la conexión.
 func (c *client) send(reply protocol.Reply) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	if c.writeTimeout > 0 {
+		if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
+			return err
+		}
+		defer c.conn.SetWriteDeadline(time.Time{})
+	}
 	return c.proto.Encode(c.conn, reply)
 }
 
