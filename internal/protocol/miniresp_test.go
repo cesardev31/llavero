@@ -45,6 +45,26 @@ func TestParseMalformed(t *testing.T) {
 	}
 }
 
+func TestParseRejectsOversized(t *testing.T) {
+	// número de partes por encima de maxArgs y longitud de bulk por encima de
+	// maxBulkSize deben rechazarse antes de reservar memoria.
+	for _, input := range []string{"*99999999\n", "*1\n$999999999\n"} {
+		r := bufio.NewReader(strings.NewReader(input))
+		if _, err := (MiniRESP{}).Parse(r); err == nil {
+			t.Errorf("esperaba error para %q", input)
+		}
+	}
+}
+
+func TestParseRejectsBadTerminator(t *testing.T) {
+	// tras los 2 bytes "hi" el terminador es 'x', no '\n'.
+	input := "*1\n$2\nhix\n"
+	r := bufio.NewReader(strings.NewReader(input))
+	if _, err := (MiniRESP{}).Parse(r); err == nil {
+		t.Error("esperaba error por terminador inválido")
+	}
+}
+
 func TestEncodeReplies(t *testing.T) {
 	cases := []struct {
 		reply Reply

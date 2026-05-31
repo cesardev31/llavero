@@ -85,7 +85,7 @@ func (s *Server) handleConn(conn net.Conn) {
 				return // cliente cerró limpiamente entre órdenes
 			}
 			// error de protocolo: avisar al cliente y cerrar la conexión
-			s.proto.Encode(conn, protocol.ErrorReply{Msg: "ERR " + err.Error()})
+			_ = s.proto.Encode(conn, protocol.ErrorReply{Msg: "ERR " + err.Error()})
 			return
 		}
 		reply := s.disp.Dispatch(s.store, cmd)

@@ -12,6 +12,14 @@ import (
 // ErrProtocol indica una petición que no respeta el formato mini-RESP.
 var ErrProtocol = errors.New("protocolo malformado")
 
+// Topes para acotar la memoria que una sola petición puede reservar, evitando
+// que un cliente provoque un OOM con una longitud declarada enorme. Reflejan
+// los límites por defecto de Redis (multibulk y proto-max-bulk-len).
+const (
+	maxArgs     = 1024 * 1024       // máximo de partes por orden
+	maxBulkSize = 512 * 1024 * 1024 // máximo de bytes por valor (512 MiB)
+)
+
 // MiniRESP implementa Protocol con marco propio terminado en '\n':
 //
 //	petición:  *N\n  luego N veces  $len\n<bytes>\n
@@ -29,7 +37,7 @@ func (MiniRESP) Parse(r *bufio.Reader) (Command, error) {
 		return Command{}, ErrProtocol
 	}
 	n, err := strconv.Atoi(line[1:])
-	if err != nil || n < 1 {
+	if err != nil || n < 1 || n > maxArgs {
 		return Command{}, ErrProtocol
 	}
 	parts := make([][]byte, n)
@@ -54,16 +62,25 @@ func readBulk(r *bufio.Reader) ([]byte, error) {
 		return nil, ErrProtocol
 	}
 	n, err := strconv.Atoi(line[1:])
-	if err != nil || n < 0 {
+	if err != nil || n < 0 || n > maxBulkSize {
 		return nil, ErrProtocol
 	}
 	buf := make([]byte, n)
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return nil, err
 	}
-	// consumir el '\n' (y posible '\r') que cierra los bytes
-	if _, err := r.ReadString('\n'); err != nil {
+	// validar el terminador tras los bytes: '\n' o '\r\n'
+	term, err := r.ReadByte()
+	if err != nil {
 		return nil, err
+	}
+	if term == '\r' {
+		if term, err = r.ReadByte(); err != nil {
+			return nil, err
+		}
+	}
+	if term != '\n' {
+		return nil, ErrProtocol
 	}
 	return buf, nil
 }

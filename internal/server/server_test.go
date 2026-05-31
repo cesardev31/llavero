@@ -76,6 +76,55 @@ func TestUnknownCommandReturnsError(t *testing.T) {
 	}
 }
 
+// writeCmd serializa una orden mini-RESP en un writer ya conectado.
+func writeCmd(w *bufio.Writer, parts ...string) {
+	fmt.Fprintf(w, "*%d\n", len(parts))
+	for _, p := range parts {
+		fmt.Fprintf(w, "$%d\n%s\n", len(p), p)
+	}
+	w.Flush()
+}
+
+func TestGetReturnsFullValue(t *testing.T) {
+	addr := startTestServer(t)
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial devolvió error: %v", err)
+	}
+	defer conn.Close()
+	w := bufio.NewWriter(conn)
+	r := bufio.NewReader(conn)
+
+	writeCmd(w, "SET", "k", "hola")
+	if line, _ := r.ReadString('\n'); strings.TrimRight(line, "\r\n") != "+OK" {
+		t.Fatalf("SET -> %q", line)
+	}
+	writeCmd(w, "GET", "k")
+	hdr, _ := r.ReadString('\n')
+	body, _ := r.ReadString('\n')
+	if strings.TrimRight(hdr, "\r\n") != "$4" || strings.TrimRight(body, "\r\n") != "hola" {
+		t.Fatalf("GET -> %q %q, quería $4 / hola", hdr, body)
+	}
+}
+
+func TestMalformedRequestGetsError(t *testing.T) {
+	addr := startTestServer(t)
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial devolvió error: %v", err)
+	}
+	defer conn.Close()
+
+	fmt.Fprint(conn, "esto no es mini-resp\n")
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		t.Fatalf("lectura devolvió error: %v", err)
+	}
+	if !strings.HasPrefix(strings.TrimRight(line, "\r\n"), "-ERR") {
+		t.Fatalf("esperaba -ERR ante petición malformada, obtuve %q", line)
+	}
+}
+
 func TestConcurrentConnections(t *testing.T) {
 	addr := startTestServer(t)
 	const n = 10
