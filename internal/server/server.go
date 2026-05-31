@@ -2,21 +2,32 @@ package server
 
 import (
 	"bufio"
-	"fmt"
+	"io"
 	"log"
 	"net"
-	"strings"
+
+	"llavero/internal/command"
+	"llavero/internal/protocol"
+	"llavero/internal/store"
 )
 
 // Server es un servidor TCP de Llavero.
 type Server struct {
-	addr string
-	ln   net.Listener
+	addr  string
+	ln    net.Listener
+	store *store.Store
+	disp  *command.Dispatcher
+	proto protocol.Protocol
 }
 
 // New crea un servidor que escuchará en la dirección dada (p.ej. ":6380").
 func New(addr string) *Server {
-	return &Server{addr: addr}
+	return &Server{
+		addr:  addr,
+		store: store.New(256),
+		disp:  command.NewDispatcher(),
+		proto: protocol.MiniRESP{},
+	}
 }
 
 // Listen abre el socket TCP. Debe llamarse antes de Serve.
@@ -46,7 +57,6 @@ func (s *Server) Close() error {
 }
 
 // Serve acepta conexiones y lanza una goroutine por cada una.
-// Devuelve error cuando el listener se cierra.
 func (s *Server) Serve() error {
 	for {
 		conn, err := s.ln.Accept()
@@ -57,7 +67,7 @@ func (s *Server) Serve() error {
 	}
 }
 
-// handleConn atiende una única conexión: lee líneas y responde comandos.
+// handleConn atiende una conexión: parsea órdenes, las despacha y responde.
 // Un pánico aquí solo afecta a esta conexión, nunca al servidor.
 func (s *Server) handleConn(conn net.Conn) {
 	defer conn.Close()
@@ -69,18 +79,18 @@ func (s *Server) handleConn(conn net.Conn) {
 
 	reader := bufio.NewReader(conn)
 	for {
-		line, err := reader.ReadString('\n')
+		cmd, err := s.proto.Parse(reader)
 		if err != nil {
-			return // cliente desconectado o error de lectura
+			if err == io.EOF {
+				return // cliente cerró limpiamente entre órdenes
+			}
+			// error de protocolo: avisar al cliente y cerrar la conexión
+			s.proto.Encode(conn, protocol.ErrorReply{Msg: "ERR " + err.Error()})
+			return
 		}
-		cmd := strings.ToUpper(strings.TrimSpace(line))
-		switch cmd {
-		case "":
-			continue
-		case "PING":
-			fmt.Fprint(conn, "PONG\r\n")
-		default:
-			fmt.Fprintf(conn, "ERR comando desconocido: %s\r\n", cmd)
+		reply := s.disp.Dispatch(s.store, cmd)
+		if err := s.proto.Encode(conn, reply); err != nil {
+			return
 		}
 	}
 }
