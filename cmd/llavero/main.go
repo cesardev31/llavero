@@ -14,12 +14,26 @@ func main() {
 	addr := flag.String("addr", ":6380", "dirección TCP de escucha")
 	snapshot := flag.String("snapshot", "llavero.snapshot", "archivo de snapshot; vacío desactiva persistencia")
 	saveInterval := flag.Duration("save-interval", 0, "intervalo de snapshot automático; 0 lo desactiva")
+	aof := flag.String("aof", "", "archivo append-only; vacío desactiva AOF")
+	aofSync := flag.String("aof-fsync", "always", "política fsync del AOF: always, everysec o no")
 	flag.Parse()
+
+	snapshotSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "snapshot" {
+			snapshotSet = true
+		}
+	})
+	if *aof != "" && !snapshotSet {
+		*snapshot = ""
+	}
 
 	s, err := server.NewWithOptions(server.Options{
 		Addr:         *addr,
 		SnapshotPath: *snapshot,
 		SaveInterval: *saveInterval,
+		AOFPath:      *aof,
+		AOFSync:      *aofSync,
 	})
 	if err != nil {
 		log.Fatalf("no se pudo cargar snapshot: %v", err)

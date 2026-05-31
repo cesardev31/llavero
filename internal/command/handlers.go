@@ -74,6 +74,20 @@ func cmdExpire(s *store.Store, args [][]byte) protocol.Reply {
 	return protocol.IntReply{N: 0}
 }
 
+func cmdPExpireAt(s *store.Store, args [][]byte) protocol.Reply {
+	if len(args) != 2 {
+		return protocol.ErrorReply{Msg: "ERR PEXPIREAT requiere 2 argumentos"}
+	}
+	ms, err := strconv.ParseInt(string(args[1]), 10, 64)
+	if err != nil {
+		return protocol.ErrorReply{Msg: "ERR el timestamp debe ser un entero"}
+	}
+	if s.ExpireAt(string(args[0]), time.UnixMilli(ms)) {
+		return protocol.IntReply{N: 1}
+	}
+	return protocol.IntReply{N: 0}
+}
+
 func cmdTTL(s *store.Store, args [][]byte) protocol.Reply {
 	if len(args) != 1 {
 		return protocol.ErrorReply{Msg: "ERR TTL requiere 1 argumento"}

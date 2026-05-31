@@ -2,7 +2,9 @@ package command
 
 import (
 	"errors"
+	"strconv"
 	"testing"
+	"time"
 
 	"llavero/internal/protocol"
 	"llavero/internal/store"
@@ -98,6 +100,15 @@ func TestExpireTtlPersist(t *testing.T) {
 	// EXPIRE con segundos no numéricos → error
 	if _, ok := dispatch(d, s, "EXPIRE", "k", "abc").(protocol.ErrorReply); !ok {
 		t.Errorf("EXPIRE con segundos no numéricos debería dar ErrorReply")
+	}
+
+	dispatch(d, s, "SET", "abs", "v")
+	at := time.Now().Add(100 * time.Second).UnixMilli()
+	if r := dispatch(d, s, "PEXPIREAT", "abs", strconv.FormatInt(at, 10)); r != (protocol.IntReply{N: 1}) {
+		t.Fatalf("PEXPIREAT → %#v", r)
+	}
+	if _, _, hasExpiry := s.TTL("abs"); !hasExpiry {
+		t.Fatal("PEXPIREAT no fijó TTL")
 	}
 }
 

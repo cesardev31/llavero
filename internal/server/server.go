@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -27,10 +28,14 @@ type Server struct {
 	disp         *command.Dispatcher
 	proto        protocol.Protocol
 	broker       *pubsub.Broker
+	aof          *persistence.AOF
+	mutationMu   sync.Mutex
 	stop         chan struct{}
 	closeOnce    sync.Once
 	snapshotPath string
 	saveInterval time.Duration
+	aofPath      string
+	aofSync      persistence.FsyncPolicy
 }
 
 // Options configura el servidor.
@@ -38,6 +43,8 @@ type Options struct {
 	Addr         string
 	SnapshotPath string
 	SaveInterval time.Duration
+	AOFPath      string
+	AOFSync      string
 }
 
 // New crea un servidor que escuchará en la dirección dada (p.ej. ":6380").
@@ -54,11 +61,39 @@ func NewWithOptions(opts Options) (*Server, error) {
 	if opts.Addr == "" {
 		opts.Addr = ":6380"
 	}
+	if opts.SnapshotPath != "" && opts.AOFPath != "" {
+		return nil, errors.New("snapshot y AOF no se pueden activar juntos todavía")
+	}
 	st := store.New(256)
 	if opts.SnapshotPath != "" {
 		if err := persistence.Load(opts.SnapshotPath, st); err != nil {
 			return nil, err
 		}
+	}
+	var aof *persistence.AOF
+	var aofSync persistence.FsyncPolicy
+	if opts.AOFPath != "" {
+		rawSync := opts.AOFSync
+		if rawSync == "" {
+			rawSync = string(persistence.FsyncAlways)
+		}
+		policy, err := persistence.ParseFsyncPolicy(rawSync)
+		if err != nil {
+			return nil, err
+		}
+		replayDisp := command.NewDispatcher()
+		if err := persistence.ReplayAOF(opts.AOFPath, func(cmd protocol.Command) error {
+			return replayAOFCommand(func(c protocol.Command) protocol.Reply {
+				return replayDisp.Dispatch(st, c)
+			}, cmd)
+		}); err != nil {
+			return nil, err
+		}
+		aof, err = persistence.OpenAOF(opts.AOFPath, policy)
+		if err != nil {
+			return nil, err
+		}
+		aofSync = policy
 	}
 	disp := command.NewDispatcher()
 	if opts.SnapshotPath != "" {
@@ -72,9 +107,12 @@ func NewWithOptions(opts Options) (*Server, error) {
 		disp:         disp,
 		proto:        protocol.RESP{},
 		broker:       pubsub.New(),
+		aof:          aof,
 		stop:         make(chan struct{}),
 		snapshotPath: opts.SnapshotPath,
 		saveInterval: opts.SaveInterval,
+		aofPath:      opts.AOFPath,
+		aofSync:      aofSync,
 	}, nil
 }
 
@@ -99,11 +137,20 @@ func (s *Server) Addr() string {
 // Close detiene la expiración activa y cierra el socket. Es seguro llamarlo
 // varias veces (sync.Once protege el cierre del canal stop).
 func (s *Server) Close() error {
-	s.closeOnce.Do(func() { close(s.stop) })
+	var aofErr error
+	s.closeOnce.Do(func() {
+		close(s.stop)
+		if s.aof != nil {
+			aofErr = s.aof.Close()
+		}
+	})
 	if s.ln == nil {
-		return nil
+		return aofErr
 	}
-	return s.ln.Close()
+	if err := s.ln.Close(); err != nil {
+		return err
+	}
+	return aofErr
 }
 
 // Save guarda un snapshot del store si hay snapshotPath configurado.
@@ -209,6 +256,6 @@ func (s *Server) handleCommand(c *client, cmd protocol.Command) protocol.Reply {
 	case "PUBLISH":
 		return s.cmdPublish(cmd.Args)
 	default:
-		return s.disp.Dispatch(s.store, cmd)
+		return s.dispatchWithAOF(cmd)
 	}
 }

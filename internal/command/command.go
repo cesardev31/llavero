@@ -34,6 +34,7 @@ func NewDispatcherWithSave(save SaveFunc) *Dispatcher {
 	d.handlers["DEL"] = cmdDel
 	d.handlers["EXISTS"] = cmdExists
 	d.handlers["EXPIRE"] = cmdExpire
+	d.handlers["PEXPIREAT"] = cmdPExpireAt
 	d.handlers["TTL"] = cmdTTL
 	d.handlers["PERSIST"] = cmdPersist
 	d.handlers["LPUSH"] = cmdLPush

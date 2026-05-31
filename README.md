@@ -23,6 +23,16 @@ go run ./cmd/llavero \
 - `-snapshot`: archivo usado para cargar al arrancar y guardar con `SAVE`.
   Si queda vacío, la persistencia queda desactivada.
 - `-save-interval`: intervalo de snapshot automático. `0` lo desactiva.
+- `-aof`: archivo append-only para recuperar escrituras confirmadas.
+- `-aof-fsync`: política de sincronización del AOF: `always`, `everysec` o
+  `no`. Por defecto usa `always`.
+
+Snapshot y AOF todavía son modos excluyentes. Si se usa `-aof` sin pasar
+`-snapshot`, el servidor desactiva el snapshot por defecto automáticamente:
+
+```bash
+go run ./cmd/llavero -aof appendonly.aof -aof-fsync always
+```
 
 ## CLI
 
@@ -66,6 +76,7 @@ Strings y TTL:
 - `DEL key...`
 - `EXISTS key`
 - `EXPIRE key segundos`
+- `PEXPIREAT key unix_ms`
 - `TTL key`
 - `PERSIST key`
 

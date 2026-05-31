@@ -148,6 +148,12 @@ func (s *Store) Del(key string) bool {
 // Expire fija una expiración relativa para una clave existente. Devuelve si la
 // clave existía y no estaba vencida.
 func (s *Store) Expire(key string, d time.Duration) bool {
+	return s.ExpireAt(key, time.Now().Add(d))
+}
+
+// ExpireAt fija una expiración absoluta para una clave existente. Devuelve si
+// la clave existía y no estaba vencida en el momento de aplicar el cambio.
+func (s *Store) ExpireAt(key string, at time.Time) bool {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
@@ -155,7 +161,7 @@ func (s *Store) Expire(key string, d time.Duration) bool {
 	if !ok {
 		return false
 	}
-	e.expireAt = time.Now().Add(d)
+	e.expireAt = at
 	return true
 }
 

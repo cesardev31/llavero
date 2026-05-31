@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,6 +25,22 @@ func startTestServer(t *testing.T) string {
 	go s.Serve()
 	t.Cleanup(func() { s.Close() })
 	return s.Addr()
+}
+
+func startTestServerWithOptions(t *testing.T, opts Options) (*Server, string) {
+	t.Helper()
+	if opts.Addr == "" {
+		opts.Addr = "127.0.0.1:0"
+	}
+	s, err := NewWithOptions(opts)
+	if err != nil {
+		t.Fatalf("NewWithOptions devolvió error: %v", err)
+	}
+	if err := s.Listen(); err != nil {
+		t.Fatalf("Listen devolvió error: %v", err)
+	}
+	go s.Serve()
+	return s, s.Addr()
 }
 
 // sendCommand envía las partes como una orden mini-RESP y devuelve la primera
@@ -298,6 +315,93 @@ func TestSaveWithoutSnapshotPathIsNoop(t *testing.T) {
 	s.store.Set("k", []byte("v"))
 	if err := s.Save(); err != nil {
 		t.Fatalf("Save sin snapshotPath debería ser no-op, devolvió %v", err)
+	}
+}
+
+func TestAOFRecoversWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "appendonly.aof")
+	s, addr := startTestServerWithOptions(t, Options{AOFPath: path, AOFSync: "always"})
+
+	if got := sendCommand(t, addr, "SET", "k", "v"); got != "+OK" {
+		t.Fatalf("SET -> %q", got)
+	}
+	if got := sendCommand(t, addr, "RPUSH", "lista", "a", "b"); got != ":2" {
+		t.Fatalf("RPUSH -> %q", got)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close primer servidor -> %v", err)
+	}
+
+	s2, addr2 := startTestServerWithOptions(t, Options{AOFPath: path, AOFSync: "always"})
+	t.Cleanup(func() { s2.Close() })
+	if got := sendCommand(t, addr2, "GET", "k"); got != "$1" {
+		t.Fatalf("GET recuperado header -> %q, quería $1", got)
+	}
+
+	conn, err := net.Dial("tcp", addr2)
+	if err != nil {
+		t.Fatalf("Dial -> %v", err)
+	}
+	defer conn.Close()
+	w := bufio.NewWriter(conn)
+	r := bufio.NewReader(conn)
+	writeCmd(w, "LRANGE", "lista", "0", "-1")
+	if got := readReply(t, r); len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("LRANGE recuperado -> %v", got)
+	}
+}
+
+func TestAOFRecoversAbsoluteTTL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "appendonly.aof")
+	s, addr := startTestServerWithOptions(t, Options{AOFPath: path, AOFSync: "always"})
+	if got := sendCommand(t, addr, "SET", "temp", "v"); got != "+OK" {
+		t.Fatalf("SET -> %q", got)
+	}
+	if got := sendCommand(t, addr, "EXPIRE", "temp", "1"); got != ":1" {
+		t.Fatalf("EXPIRE -> %q", got)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close primer servidor -> %v", err)
+	}
+
+	time.Sleep(1100 * time.Millisecond)
+
+	s2, addr2 := startTestServerWithOptions(t, Options{AOFPath: path, AOFSync: "always"})
+	t.Cleanup(func() { s2.Close() })
+	if got := sendCommand(t, addr2, "GET", "temp"); got != "$-1" {
+		t.Fatalf("GET temp tras replay tardío -> %q, quería $-1", got)
+	}
+}
+
+func TestAOFDoesNotRecordFailedMutations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "appendonly.aof")
+	s, addr := startTestServerWithOptions(t, Options{AOFPath: path, AOFSync: "always"})
+	if got := sendCommand(t, addr, "SET", "str", "v"); got != "+OK" {
+		t.Fatalf("SET -> %q", got)
+	}
+	if got := sendCommand(t, addr, "RPUSH", "str", "x"); !strings.HasPrefix(got, "-WRONGTYPE") {
+		t.Fatalf("RPUSH wrongtype -> %q", got)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close -> %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile AOF -> %v", err)
+	}
+	if strings.Contains(string(data), "RPUSH") {
+		t.Fatalf("AOF registró comando fallido: %q", data)
+	}
+}
+
+func TestAOFAndSnapshotAreMutuallyExclusive(t *testing.T) {
+	_, err := NewWithOptions(Options{
+		Addr:         "127.0.0.1:0",
+		SnapshotPath: filepath.Join(t.TempDir(), "dump.llavero"),
+		AOFPath:      filepath.Join(t.TempDir(), "appendonly.aof"),
+	})
+	if err == nil {
+		t.Fatal("NewWithOptions aceptó snapshot y AOF juntos")
 	}
 }
 
