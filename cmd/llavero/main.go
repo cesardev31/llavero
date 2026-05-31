@@ -23,6 +23,8 @@ func main() {
 	readTimeout := flag.Duration("read-timeout", 0, "timeout de lectura por comando; 0 lo desactiva")
 	writeTimeout := flag.Duration("write-timeout", 0, "timeout de escritura por respuesta/pubsub; 0 lo desactiva")
 	maxMemory := flag.Int64("max-memory", 0, "límite aproximado de memoria para claves/valores; 0 lo desactiva")
+	slowLogThreshold := flag.Duration("slowlog-threshold", 0, "latencia mínima para registrar en SLOWLOG; 0 lo desactiva")
+	slowLogMaxLen := flag.Int("slowlog-max-len", 128, "máximo de entradas retenidas en SLOWLOG")
 	flag.Parse()
 
 	if *requirePass == "" {
@@ -40,18 +42,20 @@ func main() {
 	}
 
 	s, err := server.NewWithOptions(server.Options{
-		Addr:           *addr,
-		SnapshotPath:   *snapshot,
-		SaveInterval:   *saveInterval,
-		AOFPath:        *aof,
-		AOFSync:        *aofSync,
-		AuthPassword:   *requirePass,
-		TLSCertPath:    *tlsCert,
-		TLSKeyPath:     *tlsKey,
-		MaxConnections: *maxConnections,
-		ReadTimeout:    *readTimeout,
-		WriteTimeout:   *writeTimeout,
-		MaxMemoryBytes: *maxMemory,
+		Addr:             *addr,
+		SnapshotPath:     *snapshot,
+		SaveInterval:     *saveInterval,
+		AOFPath:          *aof,
+		AOFSync:          *aofSync,
+		AuthPassword:     *requirePass,
+		TLSCertPath:      *tlsCert,
+		TLSKeyPath:       *tlsKey,
+		MaxConnections:   *maxConnections,
+		ReadTimeout:      *readTimeout,
+		WriteTimeout:     *writeTimeout,
+		MaxMemoryBytes:   *maxMemory,
+		SlowLogThreshold: *slowLogThreshold,
+		SlowLogMaxLen:    *slowLogMaxLen,
 	})
 	if err != nil {
 		log.Fatalf("no se pudo cargar snapshot: %v", err)

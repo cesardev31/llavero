@@ -73,6 +73,46 @@ func sendCommand(t *testing.T, addr string, parts ...string) string {
 	return strings.TrimRight(reply, "\r\n")
 }
 
+func sendBulkCommand(t *testing.T, addr string, parts ...string) string {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial devolvió error: %v", err)
+	}
+	defer conn.Close()
+	w := bufio.NewWriter(conn)
+	r := bufio.NewReader(conn)
+	writeCmd(w, parts...)
+	return readBulkString(t, r)
+}
+
+func readBulkString(t *testing.T, r *bufio.Reader) string {
+	t.Helper()
+	hdr, err := r.ReadString('\n')
+	if err != nil {
+		t.Fatalf("lectura bulk header -> %v", err)
+	}
+	hdr = strings.TrimRight(hdr, "\r\n")
+	if !strings.HasPrefix(hdr, "$") {
+		t.Fatalf("esperaba bulk, obtuve %q", hdr)
+	}
+	n, err := strconv.Atoi(hdr[1:])
+	if err != nil {
+		t.Fatalf("bulk inválido %q: %v", hdr, err)
+	}
+	if n < 0 {
+		return ""
+	}
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		t.Fatalf("lectura bulk body -> %v", err)
+	}
+	if _, err := r.Discard(2); err != nil {
+		t.Fatalf("discard crlf -> %v", err)
+	}
+	return string(buf)
+}
+
 func TestServerListensOnEphemeralPort(t *testing.T) {
 	s := New("127.0.0.1:0")
 	if err := s.Listen(); err != nil {
@@ -410,6 +450,111 @@ func TestResourceLimitOptionsRejectNegativeValues(t *testing.T) {
 	}
 	if _, err := NewWithOptions(Options{MaxMemoryBytes: -1}); err == nil {
 		t.Fatal("MaxMemoryBytes negativo fue aceptado")
+	}
+}
+
+func TestInfoAndStatsExposeMetrics(t *testing.T) {
+	s, addr := startTestServerWithOptions(t, Options{MaxConnections: 2, MaxMemoryBytes: 1024})
+	t.Cleanup(func() { s.Close() })
+
+	if got := sendCommand(t, addr, "PING"); got != "+PONG" {
+		t.Fatalf("PING -> %q", got)
+	}
+	if got := sendCommand(t, addr, "SET", "obs", "ok"); got != "+OK" {
+		t.Fatalf("SET -> %q", got)
+	}
+	info := sendBulkCommand(t, addr, "INFO")
+	for _, want := range []string{
+		"# Server",
+		"connected_clients:",
+		"total_commands_processed:",
+		"used_memory_approx:",
+		"maxmemory:1024",
+		"cmdstat_ping:calls=1",
+		"cmdstat_set:calls=1",
+	} {
+		if !strings.Contains(info, want) {
+			t.Fatalf("INFO no contiene %q:\n%s", want, info)
+		}
+	}
+	stats := sendBulkCommand(t, addr, "STATS")
+	if !strings.Contains(stats, "total_commands_processed:") {
+		t.Fatalf("STATS inesperado:\n%s", stats)
+	}
+}
+
+func TestInfoTracksRejectedConnections(t *testing.T) {
+	s, addr := startTestServerWithOptions(t, Options{MaxConnections: 1})
+	t.Cleanup(func() { s.Close() })
+
+	conn1, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial conn1 -> %v", err)
+	}
+	defer conn1.Close()
+	time.Sleep(20 * time.Millisecond)
+	conn2, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial conn2 -> %v", err)
+	}
+	if err := conn2.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline -> %v", err)
+	}
+	if _, err := bufio.NewReader(conn2).ReadString('\n'); err != nil {
+		t.Fatalf("lectura conn2 -> %v", err)
+	}
+	_ = conn2.Close()
+	_ = conn1.Close()
+
+	time.Sleep(20 * time.Millisecond)
+	info := sendBulkCommand(t, addr, "INFO")
+	if !strings.Contains(info, "rejected_connections:1") {
+		t.Fatalf("INFO no registró rechazo:\n%s", info)
+	}
+}
+
+func TestSlowLogLenGetAndReset(t *testing.T) {
+	s, addr := startTestServerWithOptions(t, Options{
+		SlowLogThreshold: time.Nanosecond,
+		SlowLogMaxLen:    4,
+	})
+	t.Cleanup(func() { s.Close() })
+
+	if got := sendCommand(t, addr, "PING"); got != "+PONG" {
+		t.Fatalf("PING -> %q", got)
+	}
+	if got := sendCommand(t, addr, "SLOWLOG", "LEN"); !strings.HasPrefix(got, ":") || got == ":0" {
+		t.Fatalf("SLOWLOG LEN -> %q", got)
+	}
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial -> %v", err)
+	}
+	defer conn.Close()
+	w := bufio.NewWriter(conn)
+	r := bufio.NewReader(conn)
+	writeCmd(w, "SLOWLOG", "GET", "1")
+	line, err := r.ReadString('\n')
+	if err != nil {
+		t.Fatalf("SLOWLOG GET lectura -> %v", err)
+	}
+	if got := strings.TrimRight(line, "\r\n"); got != "*1" {
+		t.Fatalf("SLOWLOG GET header -> %q", got)
+	}
+	if got := sendCommand(t, addr, "SLOWLOG", "RESET"); got != "+OK" {
+		t.Fatalf("SLOWLOG RESET -> %q", got)
+	}
+	if got := sendCommand(t, addr, "SLOWLOG", "LEN"); got != ":0" {
+		t.Fatalf("SLOWLOG LEN tras reset -> %q", got)
+	}
+}
+
+func TestObservabilityOptionsRejectNegativeValues(t *testing.T) {
+	if _, err := NewWithOptions(Options{SlowLogThreshold: -time.Nanosecond}); err == nil {
+		t.Fatal("SlowLogThreshold negativo fue aceptado")
+	}
+	if _, err := NewWithOptions(Options{SlowLogMaxLen: -1}); err == nil {
+		t.Fatal("SlowLogMaxLen negativo fue aceptado")
 	}
 }
 

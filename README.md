@@ -36,6 +36,9 @@ go run ./cmd/llavero \
 - `-write-timeout`: timeout de escritura por respuesta/pubsub. `0` lo desactiva.
 - `-max-memory`: límite aproximado de bytes para claves y valores vivos. `0`
   lo desactiva.
+- `-slowlog-threshold`: latencia mínima para registrar comandos lentos. `0` lo
+  desactiva.
+- `-slowlog-max-len`: máximo de entradas retenidas en `SLOWLOG`.
 
 Snapshot y AOF todavía son modos excluyentes. Si se usa `-aof` sin pasar
 `-snapshot`, el servidor desactiva el snapshot por defecto automáticamente:
@@ -58,7 +61,8 @@ go run ./cmd/llavero \
   -max-connections 1000 \
   -read-timeout 30s \
   -write-timeout 5s \
-  -max-memory 1073741824
+  -max-memory 1073741824 \
+  -slowlog-threshold 10ms
 ```
 
 ## CLI
@@ -111,6 +115,11 @@ Strings y TTL:
 
 - `PING [mensaje]`
 - `AUTH password`
+- `INFO [section]`
+- `STATS`
+- `SLOWLOG GET [n]`
+- `SLOWLOG LEN`
+- `SLOWLOG RESET`
 - `GET key`
 - `SET key value`
 - `DEL key...`
