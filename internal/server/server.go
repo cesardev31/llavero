@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"llavero/internal/command"
+	"llavero/internal/persistence"
 	"llavero/internal/protocol"
 	"llavero/internal/store"
 )
@@ -18,24 +19,59 @@ const expireInterval = 100 * time.Millisecond
 
 // Server es un servidor TCP de Llavero.
 type Server struct {
-	addr      string
-	ln        net.Listener
-	store     *store.Store
-	disp      *command.Dispatcher
-	proto     protocol.Protocol
-	stop      chan struct{}
-	closeOnce sync.Once
+	addr         string
+	ln           net.Listener
+	store        *store.Store
+	disp         *command.Dispatcher
+	proto        protocol.Protocol
+	stop         chan struct{}
+	closeOnce    sync.Once
+	snapshotPath string
+	saveInterval time.Duration
+}
+
+// Options configura el servidor.
+type Options struct {
+	Addr         string
+	SnapshotPath string
+	SaveInterval time.Duration
 }
 
 // New crea un servidor que escuchará en la dirección dada (p.ej. ":6380").
 func New(addr string) *Server {
-	return &Server{
-		addr:  addr,
-		store: store.New(256),
-		disp:  command.NewDispatcher(),
-		proto: protocol.MiniRESP{},
-		stop:  make(chan struct{}),
+	s, err := NewWithOptions(Options{Addr: addr})
+	if err != nil {
+		panic(err)
 	}
+	return s
+}
+
+// NewWithOptions crea un servidor y carga el snapshot si SnapshotPath existe.
+func NewWithOptions(opts Options) (*Server, error) {
+	if opts.Addr == "" {
+		opts.Addr = ":6380"
+	}
+	st := store.New(256)
+	if opts.SnapshotPath != "" {
+		if err := persistence.Load(opts.SnapshotPath, st); err != nil {
+			return nil, err
+		}
+	}
+	disp := command.NewDispatcher()
+	if opts.SnapshotPath != "" {
+		disp = command.NewDispatcherWithSave(func(s *store.Store) error {
+			return persistence.Save(opts.SnapshotPath, s)
+		})
+	}
+	return &Server{
+		addr:         opts.Addr,
+		store:        st,
+		disp:         disp,
+		proto:        protocol.MiniRESP{},
+		stop:         make(chan struct{}),
+		snapshotPath: opts.SnapshotPath,
+		saveInterval: opts.SaveInterval,
+	}, nil
 }
 
 // Listen abre el socket TCP. Debe llamarse antes de Serve.
@@ -69,12 +105,31 @@ func (s *Server) Close() error {
 // Serve lanza la expiración activa y acepta conexiones (una goroutine por una).
 func (s *Server) Serve() error {
 	go s.expireLoop()
+	if s.snapshotPath != "" && s.saveInterval > 0 {
+		go s.saveLoop()
+	}
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
 			return err
 		}
 		go s.handleConn(conn)
+	}
+}
+
+// saveLoop guarda snapshots periódicos hasta el cierre.
+func (s *Server) saveLoop() {
+	t := time.NewTicker(s.saveInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-t.C:
+			if err := persistence.Save(s.snapshotPath, s.store); err != nil {
+				log.Printf("no se pudo guardar snapshot: %v", err)
+			}
+		}
 	}
 }
 

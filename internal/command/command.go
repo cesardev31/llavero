@@ -12,6 +12,9 @@ import (
 // Handler ejecuta un comando sobre el store y devuelve una respuesta.
 type Handler func(s *store.Store, args [][]byte) protocol.Reply
 
+// SaveFunc persiste el store. Se inyecta desde la capa de servidor.
+type SaveFunc func(s *store.Store) error
+
 // Dispatcher resuelve el handler de cada comando por nombre.
 type Dispatcher struct {
 	handlers map[string]Handler
@@ -19,6 +22,11 @@ type Dispatcher struct {
 
 // NewDispatcher crea un dispatcher con los comandos soportados registrados.
 func NewDispatcher() *Dispatcher {
+	return NewDispatcherWithSave(nil)
+}
+
+// NewDispatcherWithSave crea un dispatcher y registra SAVE si save no es nil.
+func NewDispatcherWithSave(save SaveFunc) *Dispatcher {
 	d := &Dispatcher{handlers: make(map[string]Handler)}
 	d.handlers["PING"] = cmdPing
 	d.handlers["GET"] = cmdGet
@@ -44,6 +52,9 @@ func NewDispatcher() *Dispatcher {
 	d.handlers["SISMEMBER"] = cmdSIsMember
 	d.handlers["SMEMBERS"] = cmdSMembers
 	d.handlers["SCARD"] = cmdSCard
+	if save != nil {
+		d.handlers["SAVE"] = cmdSave(save)
+	}
 	return d
 }
 

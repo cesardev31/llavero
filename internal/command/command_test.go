@@ -1,6 +1,7 @@
 package command
 
 import (
+	"errors"
 	"testing"
 
 	"llavero/internal/protocol"
@@ -173,5 +174,30 @@ func TestSetCommands(t *testing.T) {
 	dispatch(d, s, "SET", "str", "v")
 	if _, ok := dispatch(d, s, "SADD", "str", "x").(protocol.ErrorReply); !ok {
 		t.Error("SADD sobre string debería dar ErrorReply")
+	}
+}
+
+func TestSaveCommand(t *testing.T) {
+	called := false
+	d := NewDispatcherWithSave(func(s *store.Store) error {
+		called = true
+		return nil
+	})
+	s := store.New(16)
+	if r := dispatch(d, s, "SAVE"); r != (protocol.StatusReply{Msg: "OK"}) {
+		t.Fatalf("SAVE -> %#v", r)
+	}
+	if !called {
+		t.Fatal("SAVE no llamó la función de persistencia")
+	}
+	if _, ok := dispatch(d, s, "SAVE", "extra").(protocol.ErrorReply); !ok {
+		t.Fatal("SAVE con argumentos debería dar ErrorReply")
+	}
+
+	d = NewDispatcherWithSave(func(s *store.Store) error {
+		return errors.New("falló")
+	})
+	if _, ok := dispatch(d, s, "SAVE").(protocol.ErrorReply); !ok {
+		t.Fatal("SAVE con error debería dar ErrorReply")
 	}
 }

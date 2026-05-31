@@ -109,3 +109,15 @@ func bulkArray(items [][]byte) protocol.Reply {
 	}
 	return protocol.ArrayReply{Elems: elems}
 }
+
+func cmdSave(save SaveFunc) Handler {
+	return func(s *store.Store, args [][]byte) protocol.Reply {
+		if len(args) != 0 {
+			return protocol.ErrorReply{Msg: "ERR SAVE no recibe argumentos"}
+		}
+		if err := save(s); err != nil {
+			return protocol.ErrorReply{Msg: "ERR " + err.Error()}
+		}
+		return protocol.StatusReply{Msg: "OK"}
+	}
+}

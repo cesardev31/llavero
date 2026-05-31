@@ -4,8 +4,12 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"llavero/internal/persistence"
+	"llavero/internal/store"
 )
 
 func startTestServer(t *testing.T) string {
@@ -130,6 +134,69 @@ func TestListCommandsOverTCP(t *testing.T) {
 		if got := strings.TrimRight(line, "\r\n"); got != want {
 			t.Fatalf("LRANGE -> %q, quería %q", got, want)
 		}
+	}
+}
+
+func TestSaveCommandPersistsSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dump.llavero")
+	s, err := NewWithOptions(Options{Addr: "127.0.0.1:0", SnapshotPath: path})
+	if err != nil {
+		t.Fatalf("NewWithOptions devolvió error: %v", err)
+	}
+	if err := s.Listen(); err != nil {
+		t.Fatalf("Listen devolvió error: %v", err)
+	}
+	go s.Serve()
+	t.Cleanup(func() { s.Close() })
+	addr := s.Addr()
+
+	if got := sendCommand(t, addr, "SET", "k", "v"); got != "+OK" {
+		t.Fatalf("SET -> %q", got)
+	}
+	if got := sendCommand(t, addr, "SAVE"); got != "+OK" {
+		t.Fatalf("SAVE -> %q", got)
+	}
+
+	loaded := store.New(16)
+	if err := persistence.Load(path, loaded); err != nil {
+		t.Fatalf("Load snapshot -> %v", err)
+	}
+	if got, ok, err := loaded.Get("k"); err != nil || !ok || string(got) != "v" {
+		t.Fatalf("snapshot GET -> %q %v %v", got, ok, err)
+	}
+}
+
+func TestServerLoadsSnapshotAtStartup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dump.llavero")
+	src := store.New(16)
+	src.Set("k", []byte("v"))
+	if err := persistence.Save(path, src); err != nil {
+		t.Fatalf("Save fixture -> %v", err)
+	}
+
+	s, err := NewWithOptions(Options{Addr: "127.0.0.1:0", SnapshotPath: path})
+	if err != nil {
+		t.Fatalf("NewWithOptions devolvió error: %v", err)
+	}
+	if err := s.Listen(); err != nil {
+		t.Fatalf("Listen devolvió error: %v", err)
+	}
+	go s.Serve()
+	t.Cleanup(func() { s.Close() })
+
+	conn, err := net.Dial("tcp", s.Addr())
+	if err != nil {
+		t.Fatalf("Dial devolvió error: %v", err)
+	}
+	defer conn.Close()
+	w := bufio.NewWriter(conn)
+	r := bufio.NewReader(conn)
+
+	writeCmd(w, "GET", "k")
+	hdr, _ := r.ReadString('\n')
+	body, _ := r.ReadString('\n')
+	if strings.TrimRight(hdr, "\r\n") != "$1" || strings.TrimRight(body, "\r\n") != "v" {
+		t.Fatalf("GET cargado -> %q %q, quería $1 / v", hdr, body)
 	}
 }
 
