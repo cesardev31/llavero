@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"llavero/internal/persistence"
 	"llavero/internal/store"
@@ -245,4 +246,55 @@ func TestCloseIsIdempotent(t *testing.T) {
 		t.Fatalf("primer Close devolvió error: %v", err)
 	}
 	s.Close()
+}
+
+func TestServeReturnsNilOnGracefulClose(t *testing.T) {
+	s := New("127.0.0.1:0")
+	if err := s.Listen(); err != nil {
+		t.Fatalf("Listen devolvió error: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.Serve() }()
+
+	// dar un instante a que arranque el accept loop, luego cerrar
+	time.Sleep(20 * time.Millisecond)
+	s.Close()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Serve tras cierre ordenado devolvió %v, quería nil", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Serve no retornó tras Close")
+	}
+}
+
+func TestSaveWritesSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dump.llavero")
+	s, err := NewWithOptions(Options{Addr: "127.0.0.1:0", SnapshotPath: path})
+	if err != nil {
+		t.Fatalf("NewWithOptions devolvió error: %v", err)
+	}
+	s.store.Set("k", []byte("v"))
+
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save devolvió error: %v", err)
+	}
+
+	loaded := store.New(16)
+	if err := persistence.Load(path, loaded); err != nil {
+		t.Fatalf("Load -> %v", err)
+	}
+	if got, ok, err := loaded.Get("k"); err != nil || !ok || string(got) != "v" {
+		t.Fatalf("snapshot GET -> %q %v %v", got, ok, err)
+	}
+}
+
+func TestSaveWithoutSnapshotPathIsNoop(t *testing.T) {
+	s := New("127.0.0.1:0") // sin SnapshotPath
+	s.store.Set("k", []byte("v"))
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save sin snapshotPath debería ser no-op, devolvió %v", err)
+	}
 }

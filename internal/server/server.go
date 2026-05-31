@@ -102,6 +102,15 @@ func (s *Server) Close() error {
 	return s.ln.Close()
 }
 
+// Save guarda un snapshot del store si hay snapshotPath configurado.
+// Es no-op (sin error) si no se configuró persistencia.
+func (s *Server) Save() error {
+	if s.snapshotPath == "" {
+		return nil
+	}
+	return persistence.Save(s.snapshotPath, s.store)
+}
+
 // Serve lanza la expiración activa y acepta conexiones (una goroutine por una).
 func (s *Server) Serve() error {
 	go s.expireLoop()
@@ -111,7 +120,13 @@ func (s *Server) Serve() error {
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
-			return err
+			// si el cierre fue ordenado (stop cerrado), no es un error
+			select {
+			case <-s.stop:
+				return nil
+			default:
+				return err
+			}
 		}
 		go s.handleConn(conn)
 	}
