@@ -3,8 +3,10 @@ package server
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -296,5 +298,86 @@ func TestSaveWithoutSnapshotPathIsNoop(t *testing.T) {
 	s.store.Set("k", []byte("v"))
 	if err := s.Save(); err != nil {
 		t.Fatalf("Save sin snapshotPath debería ser no-op, devolvió %v", err)
+	}
+}
+
+// readReply lee una respuesta RESP simple o de array y devuelve sus elementos
+// como strings (bulk e int). Suficiente para los asserts de pub/sub.
+func readReply(t *testing.T, r *bufio.Reader) []string {
+	t.Helper()
+	line, err := r.ReadString('\n')
+	if err != nil {
+		t.Fatalf("lectura: %v", err)
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if len(line) == 0 {
+		t.Fatal("respuesta vacía")
+	}
+	if line[0] == '*' {
+		n, _ := strconv.Atoi(line[1:])
+		out := make([]string, n)
+		for i := 0; i < n; i++ {
+			out[i] = readReplyScalar(t, r)
+		}
+		return out
+	}
+	return []string{line[1:]} // :int, +status, -error → strip the type prefix
+}
+
+func readReplyScalar(t *testing.T, r *bufio.Reader) string {
+	t.Helper()
+	line, err := r.ReadString('\n')
+	if err != nil {
+		t.Fatalf("lectura: %v", err)
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if line[0] == '$' {
+		n, _ := strconv.Atoi(line[1:])
+		if n < 0 {
+			return ""
+		}
+		buf := make([]byte, n)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			t.Fatalf("lectura bulk: %v", err)
+		}
+		if _, err := r.Discard(2); err != nil {
+			t.Fatalf("discard crlf: %v", err)
+		}
+		return string(buf)
+	}
+	return line[1:] // :int, +status, -error
+}
+
+func TestPubSub(t *testing.T) {
+	addr := startTestServer(t)
+
+	subConn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial sub: %v", err)
+	}
+	defer subConn.Close()
+	subR := bufio.NewReader(subConn)
+	subW := bufio.NewWriter(subConn)
+
+	writeCmd(subW, "SUBSCRIBE", "news")
+	if got := readReply(t, subR); len(got) != 3 || got[0] != "subscribe" || got[1] != "news" || got[2] != "1" {
+		t.Fatalf("subscribe reply → %v", got)
+	}
+
+	pubConn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial pub: %v", err)
+	}
+	defer pubConn.Close()
+	pubR := bufio.NewReader(pubConn)
+	pubW := bufio.NewWriter(pubConn)
+
+	writeCmd(pubW, "PUBLISH", "news", "hola")
+	if got := readReply(t, pubR); len(got) != 1 || got[0] != "1" {
+		t.Fatalf("PUBLISH → %v, quería 1 receptor", got)
+	}
+
+	if msg := readReply(t, subR); len(msg) != 3 || msg[0] != "message" || msg[1] != "news" || msg[2] != "hola" {
+		t.Fatalf("mensaje recibido → %v", msg)
 	}
 }

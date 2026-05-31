@@ -5,12 +5,14 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
 	"llavero/internal/command"
 	"llavero/internal/persistence"
 	"llavero/internal/protocol"
+	"llavero/internal/pubsub"
 	"llavero/internal/store"
 )
 
@@ -24,6 +26,7 @@ type Server struct {
 	store        *store.Store
 	disp         *command.Dispatcher
 	proto        protocol.Protocol
+	broker       *pubsub.Broker
 	stop         chan struct{}
 	closeOnce    sync.Once
 	snapshotPath string
@@ -68,6 +71,7 @@ func NewWithOptions(opts Options) (*Server, error) {
 		store:        st,
 		disp:         disp,
 		proto:        protocol.RESP{},
+		broker:       pubsub.New(),
 		stop:         make(chan struct{}),
 		snapshotPath: opts.SnapshotPath,
 		saveInterval: opts.SaveInterval,
@@ -166,6 +170,8 @@ func (s *Server) expireLoop() {
 // Un pánico aquí solo afecta a esta conexión, nunca al servidor.
 func (s *Server) handleConn(conn net.Conn) {
 	defer conn.Close()
+	c := newClient(conn, s.proto)
+	defer s.unsubscribeAll(c)
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("conexión %s recuperada de pánico: %v", conn.RemoteAddr(), r)
@@ -179,13 +185,30 @@ func (s *Server) handleConn(conn net.Conn) {
 			if err == io.EOF {
 				return // cliente cerró limpiamente entre órdenes
 			}
-			// error de protocolo: avisar al cliente y cerrar la conexión
-			_ = s.proto.Encode(conn, protocol.ErrorReply{Msg: "ERR " + err.Error()})
+			_ = c.send(protocol.ErrorReply{Msg: "ERR " + err.Error()})
 			return
 		}
-		reply := s.disp.Dispatch(s.store, cmd)
-		if err := s.proto.Encode(conn, reply); err != nil {
+		reply := s.handleCommand(c, cmd)
+		if reply == nil {
+			continue // el handler ya envió sus respuestas (p.ej. SUBSCRIBE)
+		}
+		if err := c.send(reply); err != nil {
 			return
 		}
+	}
+}
+
+// handleCommand enruta los comandos con estado de conexión (pub/sub) al
+// servidor y el resto al dispatcher.
+func (s *Server) handleCommand(c *client, cmd protocol.Command) protocol.Reply {
+	switch strings.ToUpper(cmd.Name) {
+	case "SUBSCRIBE":
+		return s.cmdSubscribe(c, cmd.Args)
+	case "UNSUBSCRIBE":
+		return s.cmdUnsubscribe(c, cmd.Args)
+	case "PUBLISH":
+		return s.cmdPublish(cmd.Args)
+	default:
+		return s.disp.Dispatch(s.store, cmd)
 	}
 }
