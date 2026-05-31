@@ -67,7 +67,7 @@ func NewWithOptions(opts Options) (*Server, error) {
 		addr:         opts.Addr,
 		store:        st,
 		disp:         disp,
-		proto:        protocol.MiniRESP{},
+		proto:        protocol.RESP{},
 		stop:         make(chan struct{}),
 		snapshotPath: opts.SnapshotPath,
 		saveInterval: opts.SaveInterval,

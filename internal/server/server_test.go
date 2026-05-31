@@ -34,9 +34,9 @@ func sendCommand(t *testing.T, addr string, parts ...string) string {
 	}
 	defer conn.Close()
 
-	fmt.Fprintf(conn, "*%d\n", len(parts))
+	fmt.Fprintf(conn, "*%d\r\n", len(parts))
 	for _, p := range parts {
-		fmt.Fprintf(conn, "$%d\n%s\n", len(p), p)
+		fmt.Fprintf(conn, "$%d\r\n%s\r\n", len(p), p)
 	}
 	reply, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
@@ -83,9 +83,9 @@ func TestUnknownCommandReturnsError(t *testing.T) {
 
 // writeCmd serializa una orden mini-RESP en un writer ya conectado.
 func writeCmd(w *bufio.Writer, parts ...string) {
-	fmt.Fprintf(w, "*%d\n", len(parts))
+	fmt.Fprintf(w, "*%d\r\n", len(parts))
 	for _, p := range parts {
-		fmt.Fprintf(w, "$%d\n%s\n", len(p), p)
+		fmt.Fprintf(w, "$%d\r\n%s\r\n", len(p), p)
 	}
 	w.Flush()
 }
