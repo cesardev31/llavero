@@ -1,0 +1,14 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/llavero ./cmd/llavero"
+  bin = "./tmp/llavero"
+  delay = 1000
+  include_ext = ["go"]
+  exclude_dir = ["tmp", "docs", ".git"]
+  exclude_regex = ["_test.go"]
+  stop_on_error = true
+
+[misc]
+  clean_on_exit = true
