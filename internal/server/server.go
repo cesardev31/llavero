@@ -1,6 +1,12 @@
 package server
 
-import "net"
+import (
+	"bufio"
+	"fmt"
+	"log"
+	"net"
+	"strings"
+)
 
 // Server es un servidor TCP de Llavero.
 type Server struct {
@@ -37,4 +43,44 @@ func (s *Server) Close() error {
 		return nil
 	}
 	return s.ln.Close()
+}
+
+// Serve acepta conexiones y lanza una goroutine por cada una.
+// Devuelve error cuando el listener se cierra.
+func (s *Server) Serve() error {
+	for {
+		conn, err := s.ln.Accept()
+		if err != nil {
+			return err
+		}
+		go s.handleConn(conn)
+	}
+}
+
+// handleConn atiende una única conexión: lee líneas y responde comandos.
+// Un pánico aquí solo afecta a esta conexión, nunca al servidor.
+func (s *Server) handleConn(conn net.Conn) {
+	defer conn.Close()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("conexión %s recuperada de pánico: %v", conn.RemoteAddr(), r)
+		}
+	}()
+
+	reader := bufio.NewReader(conn)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return // cliente desconectado o error de lectura
+		}
+		cmd := strings.ToUpper(strings.TrimSpace(line))
+		switch cmd {
+		case "":
+			continue
+		case "PING":
+			fmt.Fprint(conn, "PONG\r\n")
+		default:
+			fmt.Fprintf(conn, "ERR comando desconocido: %s\r\n", cmd)
+		}
+	}
 }
