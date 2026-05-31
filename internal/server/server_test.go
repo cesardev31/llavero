@@ -55,3 +55,11 @@ func TestPingReturnsPong(t *testing.T) {
 		t.Fatalf("esperaba PONG, obtuve %q", got)
 	}
 }
+
+func TestUnknownCommandReturnsError(t *testing.T) {
+	addr := startTestServer(t)
+	got := sendCommand(t, addr, "NOEXISTE")
+	if !strings.HasPrefix(got, "ERR") {
+		t.Fatalf("esperaba respuesta que empiece con ERR, obtuve %q", got)
+	}
+}
