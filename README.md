@@ -14,11 +14,13 @@ Flags disponibles:
 
 ```bash
 go run ./cmd/llavero \
+  -config deploy/llavero.conf.example \
   -addr 127.0.0.1:6380 \
   -snapshot llavero.snapshot \
   -save-interval 30s
 ```
 
+- `-config`: archivo `key=value` con configuración base.
 - `-addr`: dirección TCP de escucha. Por defecto escucha solo en
   `127.0.0.1:6380`; usa una IP explícita o `:6380` solo si quieres exponerlo
   fuera de localhost.
@@ -39,6 +41,11 @@ go run ./cmd/llavero \
 - `-slowlog-threshold`: latencia mínima para registrar comandos lentos. `0` lo
   desactiva.
 - `-slowlog-max-len`: máximo de entradas retenidas en `SLOWLOG`.
+- `-shutdown-timeout`: tiempo máximo para drenar conexiones durante apagado.
+
+Las variables `LLAVERO_*` equivalentes (`LLAVERO_ADDR`,
+`LLAVERO_REQUIREPASS`, `LLAVERO_AOF`, etc.) se aplican después del archivo de
+configuración y antes de los flags explícitos.
 
 Snapshot y AOF todavía son modos excluyentes. Si se usa `-aof` sin pasar
 `-snapshot`, el servidor desactiva el snapshot por defecto automáticamente:
@@ -115,6 +122,7 @@ Strings y TTL:
 
 - `PING [mensaje]`
 - `AUTH password`
+- `HEALTH`
 - `HELLO 2 [AUTH default password]`
 - `COMMAND [COUNT|DOCS|INFO command...]`
 - `CLIENT ID|SETINFO|SETNAME|GETNAME|INFO|LIST`

@@ -10,7 +10,7 @@ import (
 var commandNames = []string{
 	"AUTH", "CLIENT", "COMMAND", "DBSIZE", "DECR", "DECRBY", "DEL", "ECHO",
 	"EXISTS", "EXPIRE", "FLUSHALL", "GET", "HELLO", "HDEL", "HGET", "HGETALL",
-	"HLEN", "HSET", "INFO", "INCR", "INCRBY", "KEYS", "LLEN", "LPOP", "LPUSH",
+	"HEALTH", "HLEN", "HSET", "INFO", "INCR", "INCRBY", "KEYS", "LLEN", "LPOP", "LPUSH",
 	"LRANGE", "MGET", "MSET", "PEXPIREAT", "PERSIST", "PING", "PUBLISH", "QUIT",
 	"RPUSH", "RPOP", "SADD", "SCARD", "SELECT", "SET", "SETNX", "SISMEMBER",
 	"SLOWLOG", "SMEMBERS", "SREM", "STATS", "SUBSCRIBE", "TTL", "TYPE",
@@ -22,6 +22,13 @@ func (s *Server) cmdEcho(args [][]byte) protocol.Reply {
 		return protocol.ErrorReply{Msg: "ERR ECHO requiere 1 argumento"}
 	}
 	return protocol.BulkReply{Value: args[0]}
+}
+
+func (s *Server) cmdHealth(args [][]byte) protocol.Reply {
+	if len(args) != 0 {
+		return protocol.ErrorReply{Msg: "ERR HEALTH no recibe argumentos"}
+	}
+	return protocol.StatusReply{Msg: "OK"}
 }
 
 func (s *Server) cmdSelect(args [][]byte) protocol.Reply {
@@ -129,7 +136,7 @@ func commandInfo(name string) protocol.Reply {
 
 func commandFlags(name string) []protocol.Reply {
 	switch name {
-	case "GET", "MGET", "EXISTS", "TTL", "TYPE", "KEYS", "DBSIZE", "INFO", "STATS", "SLOWLOG":
+	case "GET", "MGET", "EXISTS", "TTL", "TYPE", "KEYS", "DBSIZE", "HEALTH", "INFO", "STATS", "SLOWLOG":
 		return []protocol.Reply{protocol.BulkReply{Value: []byte("readonly")}}
 	default:
 		return []protocol.Reply{protocol.BulkReply{Value: []byte("write")}}

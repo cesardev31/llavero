@@ -1,0 +1,24 @@
+# Configuración de ejemplo para Llavero.
+addr=127.0.0.1:6380
+snapshot=llavero.snapshot
+save_interval=0s
+
+# Durabilidad AOF. Snapshot y AOF son excluyentes.
+# aof=appendonly.aof
+aof_fsync=always
+
+# Seguridad.
+# requirepass=cambia-esto
+# tls_cert=/etc/llavero/server.crt
+# tls_key=/etc/llavero/server.key
+
+# Límites operativos.
+max_connections=1000
+read_timeout=30s
+write_timeout=5s
+max_memory=0
+
+# Observabilidad.
+slowlog_threshold=10ms
+slowlog_max_len=128
+shutdown_timeout=5s

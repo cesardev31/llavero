@@ -33,6 +33,10 @@ type Server struct {
 	mutationMu       sync.Mutex
 	stop             chan struct{}
 	closeOnce        sync.Once
+	connMu           sync.Mutex
+	activeConns      int
+	closing          bool
+	drained          chan struct{}
 	snapshotPath     string
 	saveInterval     time.Duration
 	aofPath          string
@@ -48,6 +52,7 @@ type Server struct {
 	metrics          *metrics
 	slowLogThreshold time.Duration
 	slowLogMaxLen    int
+	shutdownTimeout  time.Duration
 }
 
 // Options configura el servidor.
@@ -66,6 +71,7 @@ type Options struct {
 	MaxMemoryBytes   int64
 	SlowLogThreshold time.Duration
 	SlowLogMaxLen    int
+	ShutdownTimeout  time.Duration
 }
 
 // New crea un servidor que escuchará en la dirección dada (p.ej. ":6380").
@@ -96,6 +102,9 @@ func NewWithOptions(opts Options) (*Server, error) {
 	}
 	if opts.SlowLogMaxLen < 0 {
 		return nil, errors.New("SlowLogMaxLen no puede ser negativo")
+	}
+	if opts.ShutdownTimeout < 0 {
+		return nil, errors.New("ShutdownTimeout no puede ser negativo")
 	}
 	slowLogMaxLen := opts.SlowLogMaxLen
 	if slowLogMaxLen == 0 {
@@ -165,6 +174,7 @@ func NewWithOptions(opts Options) (*Server, error) {
 		metrics:          newMetrics(),
 		slowLogThreshold: opts.SlowLogThreshold,
 		slowLogMaxLen:    slowLogMaxLen,
+		shutdownTimeout:  opts.ShutdownTimeout,
 	}, nil
 }
 
@@ -206,19 +216,71 @@ func (s *Server) Addr() string {
 // varias veces (sync.Once protege el cierre del canal stop).
 func (s *Server) Close() error {
 	var aofErr error
+	var listenErr error
 	s.closeOnce.Do(func() {
+		s.beginClosing()
 		close(s.stop)
+		if s.ln != nil {
+			listenErr = s.ln.Close()
+		}
+		s.waitForConnections()
 		if s.aof != nil {
 			aofErr = s.aof.Close()
 		}
 	})
-	if s.ln == nil {
-		return aofErr
-	}
-	if err := s.ln.Close(); err != nil {
-		return err
+	if listenErr != nil {
+		return listenErr
 	}
 	return aofErr
+}
+
+func (s *Server) beginClosing() {
+	s.connMu.Lock()
+	s.closing = true
+	s.connMu.Unlock()
+}
+
+func (s *Server) trackConn() bool {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	if s.closing {
+		return false
+	}
+	if s.activeConns == 0 {
+		s.drained = make(chan struct{})
+	}
+	s.activeConns++
+	return true
+}
+
+func (s *Server) finishConn() {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	s.activeConns--
+	if s.activeConns == 0 && s.drained != nil {
+		close(s.drained)
+		s.drained = nil
+	}
+}
+
+func (s *Server) waitForConnections() {
+	s.connMu.Lock()
+	if s.activeConns == 0 {
+		s.connMu.Unlock()
+		return
+	}
+	done := s.drained
+	s.connMu.Unlock()
+
+	if s.shutdownTimeout == 0 {
+		<-done
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(s.shutdownTimeout):
+		log.Printf("event=shutdown_timeout timeout=%s", s.shutdownTimeout)
+	}
 }
 
 // Save guarda un snapshot del store si hay snapshotPath configurado.
@@ -248,6 +310,11 @@ func (s *Server) Serve() error {
 			}
 		}
 		if !s.acquireConnSlot(conn) {
+			continue
+		}
+		if !s.trackConn() {
+			s.releaseConnSlot()
+			_ = conn.Close()
 			continue
 		}
 		go s.handleConn(conn)
@@ -316,6 +383,7 @@ func (s *Server) expireLoop() {
 // Un pánico aquí solo afecta a esta conexión, nunca al servidor.
 func (s *Server) handleConn(conn net.Conn) {
 	defer conn.Close()
+	defer s.finishConn()
 	defer s.releaseConnSlot()
 	c := newClient(conn, s.proto, s.writeTimeout)
 	defer s.unsubscribeAll(c)
@@ -375,6 +443,8 @@ func (s *Server) handleCommand(c *client, cmd protocol.Command) protocol.Reply {
 		return s.cmdCommand(cmd.Args)
 	case "ECHO":
 		return s.cmdEcho(cmd.Args)
+	case "HEALTH":
+		return s.cmdHealth(cmd.Args)
 	case "INFO":
 		return s.cmdInfo(cmd.Args)
 	case "QUIT":

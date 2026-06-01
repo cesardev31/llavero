@@ -1,0 +1,22 @@
+[Unit]
+Description=Llavero in-memory data store
+After=network.target
+
+[Service]
+Type=simple
+User=llavero
+Group=llavero
+EnvironmentFile=-/etc/llavero/llavero.env
+WorkingDirectory=/var/lib/llavero
+ExecStart=/usr/local/bin/llavero -config /etc/llavero/llavero.conf
+Restart=on-failure
+RestartSec=2s
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/llavero
+
+[Install]
+WantedBy=multi-user.target

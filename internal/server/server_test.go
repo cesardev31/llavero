@@ -494,6 +494,9 @@ func TestResourceLimitOptionsRejectNegativeValues(t *testing.T) {
 	if _, err := NewWithOptions(Options{MaxMemoryBytes: -1}); err == nil {
 		t.Fatal("MaxMemoryBytes negativo fue aceptado")
 	}
+	if _, err := NewWithOptions(Options{ShutdownTimeout: -time.Nanosecond}); err == nil {
+		t.Fatal("ShutdownTimeout negativo fue aceptado")
+	}
 }
 
 func TestInfoAndStatsExposeMetrics(t *testing.T) {
@@ -603,6 +606,9 @@ func TestObservabilityOptionsRejectNegativeValues(t *testing.T) {
 
 func TestCompatCommandsForRedisClients(t *testing.T) {
 	addr := startTestServer(t)
+	if got := sendCommand(t, addr, "HEALTH"); got != "+OK" {
+		t.Fatalf("HEALTH -> %q", got)
+	}
 	if got := sendCommand(t, addr, "ECHO", "hola"); got != "$4" {
 		t.Fatalf("ECHO header -> %q", got)
 	}
@@ -620,6 +626,47 @@ func TestCompatCommandsForRedisClients(t *testing.T) {
 	}
 	if got := sendCommand(t, addr, "COMMAND", "COUNT"); !strings.HasPrefix(got, ":") || got == ":0" {
 		t.Fatalf("COMMAND COUNT -> %q", got)
+	}
+}
+
+func TestCloseDrainsActiveConnections(t *testing.T) {
+	s, addr := startTestServerWithOptions(t, Options{ShutdownTimeout: time.Second})
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial -> %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.Close() }()
+
+	select {
+	case <-done:
+		t.Fatal("Close retornó antes de cerrar la conexión activa")
+	case <-time.After(50 * time.Millisecond):
+	}
+	_ = conn.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Close -> %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close no retornó tras cerrar conexión")
+	}
+}
+
+func TestCloseHonorsShutdownTimeout(t *testing.T) {
+	s, addr := startTestServerWithOptions(t, Options{ShutdownTimeout: 20 * time.Millisecond})
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial -> %v", err)
+	}
+	defer conn.Close()
+	start := time.Now()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close -> %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Close tardó demasiado: %v", elapsed)
 	}
 }
 
