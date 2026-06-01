@@ -113,6 +113,49 @@ func readBulkString(t *testing.T, r *bufio.Reader) string {
 	return string(buf)
 }
 
+func readRESPValue(t *testing.T, r *bufio.Reader) {
+	t.Helper()
+	line, err := r.ReadString('\n')
+	if err != nil {
+		t.Fatalf("lectura RESP -> %v", err)
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if len(line) == 0 {
+		t.Fatal("RESP vacío")
+	}
+	switch line[0] {
+	case '+', '-', ':':
+		return
+	case '$':
+		n, err := strconv.Atoi(line[1:])
+		if err != nil {
+			t.Fatalf("bulk inválido %q: %v", line, err)
+		}
+		if n >= 0 {
+			if _, err := io.CopyN(io.Discard, r, int64(n+2)); err != nil {
+				t.Fatalf("discard bulk -> %v", err)
+			}
+		}
+	case '*':
+		n, err := strconv.Atoi(line[1:])
+		if err != nil {
+			t.Fatalf("array inválido %q: %v", line, err)
+		}
+		for i := 0; i < n; i++ {
+			readRESPValue(t, r)
+		}
+	default:
+		t.Fatalf("tipo RESP desconocido %q", line)
+	}
+}
+
+func consumeRESPValues(t *testing.T, r *bufio.Reader, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		readRESPValue(t, r)
+	}
+}
+
 func TestServerListensOnEphemeralPort(t *testing.T) {
 	s := New("127.0.0.1:0")
 	if err := s.Listen(); err != nil {
@@ -555,6 +598,114 @@ func TestObservabilityOptionsRejectNegativeValues(t *testing.T) {
 	}
 	if _, err := NewWithOptions(Options{SlowLogMaxLen: -1}); err == nil {
 		t.Fatal("SlowLogMaxLen negativo fue aceptado")
+	}
+}
+
+func TestCompatCommandsForRedisClients(t *testing.T) {
+	addr := startTestServer(t)
+	if got := sendCommand(t, addr, "ECHO", "hola"); got != "$4" {
+		t.Fatalf("ECHO header -> %q", got)
+	}
+	if got := sendCommand(t, addr, "SELECT", "0"); got != "+OK" {
+		t.Fatalf("SELECT 0 -> %q", got)
+	}
+	if got := sendCommand(t, addr, "SELECT", "1"); got != "-ERR DB index is out of range" {
+		t.Fatalf("SELECT 1 -> %q", got)
+	}
+	if got := sendCommand(t, addr, "CLIENT", "SETINFO", "LIB-NAME", "go-redis"); got != "+OK" {
+		t.Fatalf("CLIENT SETINFO -> %q", got)
+	}
+	if got := sendCommand(t, addr, "CLIENT", "ID"); got != ":1" {
+		t.Fatalf("CLIENT ID -> %q", got)
+	}
+	if got := sendCommand(t, addr, "COMMAND", "COUNT"); !strings.HasPrefix(got, ":") || got == ":0" {
+		t.Fatalf("COMMAND COUNT -> %q", got)
+	}
+}
+
+func TestCommandInfoAndDocs(t *testing.T) {
+	addr := startTestServer(t)
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial -> %v", err)
+	}
+	defer conn.Close()
+	w := bufio.NewWriter(conn)
+	r := bufio.NewReader(conn)
+
+	writeCmd(w, "COMMAND", "INFO", "GET", "NOPE")
+	if got, err := r.ReadString('\n'); err != nil || strings.TrimRight(got, "\r\n") != "*2" {
+		t.Fatalf("COMMAND INFO header -> %q %v", got, err)
+	}
+	_ = conn.Close()
+	if got := sendCommand(t, addr, "COMMAND", "DOCS"); got != "*0" {
+		t.Fatalf("COMMAND DOCS -> %q", got)
+	}
+}
+
+func TestHelloAndQuit(t *testing.T) {
+	addr := startTestServer(t)
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial -> %v", err)
+	}
+	defer conn.Close()
+	w := bufio.NewWriter(conn)
+	r := bufio.NewReader(conn)
+
+	writeCmd(w, "HELLO", "2")
+	if got, err := r.ReadString('\n'); err != nil || strings.TrimRight(got, "\r\n") != "*12" {
+		t.Fatalf("HELLO -> %q %v", got, err)
+	}
+	consumeRESPValues(t, r, 12)
+
+	writeCmd(w, "QUIT")
+	if got, err := r.ReadString('\n'); err != nil || strings.TrimRight(got, "\r\n") != "+OK" {
+		t.Fatalf("QUIT -> %q %v", got, err)
+	}
+	if _, err := r.ReadString('\n'); err == nil {
+		t.Fatal("la conexión siguió abierta tras QUIT")
+	}
+}
+
+func TestHelloAuth(t *testing.T) {
+	s, addr := startTestServerWithOptions(t, Options{AuthPassword: "secreto"})
+	t.Cleanup(func() { s.Close() })
+	if got := sendCommand(t, addr, "HELLO", "2"); got != "-NOAUTH Authentication required." {
+		t.Fatalf("HELLO sin AUTH -> %q", got)
+	}
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial -> %v", err)
+	}
+	defer conn.Close()
+	w := bufio.NewWriter(conn)
+	r := bufio.NewReader(conn)
+	writeCmd(w, "HELLO", "2", "AUTH", "default", "secreto")
+	if got, err := r.ReadString('\n'); err != nil || strings.TrimRight(got, "\r\n") != "*12" {
+		t.Fatalf("HELLO AUTH -> %q %v", got, err)
+	}
+	consumeRESPValues(t, r, 12)
+	writeCmd(w, "PING")
+	if got := readReply(t, r); len(got) != 1 || got[0] != "PONG" {
+		t.Fatalf("PING tras HELLO AUTH -> %v", got)
+	}
+}
+
+func TestInlineCommandOverTCP(t *testing.T) {
+	addr := startTestServer(t)
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial -> %v", err)
+	}
+	defer conn.Close()
+	if _, err := io.WriteString(conn, "PING inline\r\n"); err != nil {
+		t.Fatalf("WriteString -> %v", err)
+	}
+	got := readBulkString(t, bufio.NewReader(conn))
+	if got != "inline" {
+		t.Fatalf("inline PING -> %q", got)
 	}
 }
 

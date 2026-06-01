@@ -31,8 +31,18 @@ func TestRESPParseBinaryValue(t *testing.T) {
 	}
 }
 
+func TestRESPParseInlineCommand(t *testing.T) {
+	cmd, err := RESP{}.Parse(bufio.NewReader(strings.NewReader("PING hola\r\n")))
+	if err != nil {
+		t.Fatalf("Parse inline: %v", err)
+	}
+	if cmd.Name != "PING" || len(cmd.Args) != 1 || string(cmd.Args[0]) != "hola" {
+		t.Fatalf("cmd = %+v", cmd)
+	}
+}
+
 func TestRESPParseRejectsBad(t *testing.T) {
-	for _, in := range []string{"GET foo\r\n", "$3\r\nfoo\r\n", "*x\r\n", "*1\r\n+nobulk\r\n"} {
+	for _, in := range []string{"\r\n", "$3\r\nfoo\r\n", "*x\r\n", "*1\r\n+nobulk\r\n"} {
 		if _, err := (RESP{}).Parse(bufio.NewReader(strings.NewReader(in))); err == nil {
 			t.Errorf("esperaba error para %q", in)
 		}
@@ -51,6 +61,7 @@ func TestRESPEncode(t *testing.T) {
 		{BulkReply{Null: true}, "$-1\r\n"},
 		{ArrayReply{Elems: []Reply{BulkReply{Value: []byte("a")}, IntReply{N: 1}}}, "*2\r\n$1\r\na\r\n:1\r\n"},
 		{ArrayReply{}, "*0\r\n"},
+		{ArrayReply{Null: true}, "*-1\r\n"},
 	}
 	for _, c := range cases {
 		var buf bytes.Buffer

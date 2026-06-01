@@ -23,7 +23,7 @@ func (RESP) Parse(r *bufio.Reader) (Command, error) {
 		return Command{}, err
 	}
 	if len(line) == 0 || line[0] != '*' {
-		return Command{}, ErrProtocol
+		return parseInline(line)
 	}
 	n, err := strconv.Atoi(line[1:])
 	if err != nil || n < 1 || n > maxArgs {
@@ -38,6 +38,25 @@ func (RESP) Parse(r *bufio.Reader) (Command, error) {
 		parts[i] = b
 	}
 	return Command{Name: strings.ToUpper(string(parts[0])), Args: parts[1:]}, nil
+}
+
+func parseInline(line string) (Command, error) {
+	if line == "" {
+		return Command{}, ErrProtocol
+	}
+	switch line[0] {
+	case '$', '+', '-', ':':
+		return Command{}, ErrProtocol
+	}
+	parts := strings.Fields(line)
+	if len(parts) == 0 {
+		return Command{}, ErrProtocol
+	}
+	args := make([][]byte, len(parts)-1)
+	for i, part := range parts[1:] {
+		args[i] = []byte(part)
+	}
+	return Command{Name: strings.ToUpper(parts[0]), Args: args}, nil
 }
 
 // readCRLF lee una línea y le quita el \r\n (o \n) final.
@@ -103,6 +122,10 @@ func (RESP) Encode(w io.Writer, reply Reply) error {
 		_, err := io.WriteString(w, "\r\n")
 		return err
 	case ArrayReply:
+		if r.Null {
+			_, err := io.WriteString(w, "*-1\r\n")
+			return err
+		}
 		if _, err := fmt.Fprintf(w, "*%d\r\n", len(r.Elems)); err != nil {
 			return err
 		}

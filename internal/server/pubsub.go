@@ -11,12 +11,13 @@ import (
 // client representa una conexión: escritura serializada + sus suscripciones.
 // El mapa subs solo se accede desde la goroutine de la conexión.
 type client struct {
-	conn         net.Conn
-	proto        protocol.Protocol
-	writeTimeout time.Duration
-	writeMu      sync.Mutex
-	subs         map[string]struct{}
-	authed       bool
+	conn            net.Conn
+	proto           protocol.Protocol
+	writeTimeout    time.Duration
+	writeMu         sync.Mutex
+	subs            map[string]struct{}
+	authed          bool
+	closeAfterReply bool
 }
 
 func newClient(conn net.Conn, proto protocol.Protocol, writeTimeout time.Duration) *client {

@@ -350,6 +350,9 @@ func (s *Server) handleConn(conn net.Conn) {
 		if err := c.send(reply); err != nil {
 			return
 		}
+		if c.closeAfterReply {
+			return
+		}
 	}
 }
 
@@ -359,13 +362,25 @@ func (s *Server) handleCommand(c *client, cmd protocol.Command) protocol.Reply {
 	switch strings.ToUpper(cmd.Name) {
 	case "AUTH":
 		return s.cmdAuth(c, cmd.Args)
+	case "HELLO":
+		return s.cmdHello(c, cmd.Args)
 	}
 	if s.authRequired(c) {
 		return protocol.ErrorReply{Msg: "NOAUTH Authentication required."}
 	}
 	switch strings.ToUpper(cmd.Name) {
+	case "CLIENT":
+		return s.cmdClient(cmd.Args)
+	case "COMMAND":
+		return s.cmdCommand(cmd.Args)
+	case "ECHO":
+		return s.cmdEcho(cmd.Args)
 	case "INFO":
 		return s.cmdInfo(cmd.Args)
+	case "QUIT":
+		return s.cmdQuit(c, cmd.Args)
+	case "SELECT":
+		return s.cmdSelect(cmd.Args)
 	case "STATS":
 		return s.cmdStats(cmd.Args)
 	case "SLOWLOG":

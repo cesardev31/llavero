@@ -111,6 +111,10 @@ func (MiniRESP) Encode(w io.Writer, reply Reply) error {
 		_, err := io.WriteString(w, "\n")
 		return err
 	case ArrayReply:
+		if r.Null {
+			_, err := io.WriteString(w, "*-1\n")
+			return err
+		}
 		if _, err := fmt.Fprintf(w, "*%d\n", len(r.Elems)); err != nil {
 			return err
 		}

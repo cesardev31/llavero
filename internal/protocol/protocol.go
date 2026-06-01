@@ -35,8 +35,12 @@ type BulkReply struct {
 }
 
 // ArrayReply es una respuesta de array (p.ej. LRANGE, SMEMBERS). Sus elementos
-// suelen ser BulkReply, pero puede anidar cualquier Reply.
-type ArrayReply struct{ Elems []Reply }
+// suelen ser BulkReply, pero puede anidar cualquier Reply. Null indica array
+// nulo RESP2 (*-1).
+type ArrayReply struct {
+	Elems []Reply
+	Null  bool
+}
 
 func (StatusReply) isReply() {}
 func (ErrorReply) isReply()  {}

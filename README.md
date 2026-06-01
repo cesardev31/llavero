@@ -115,6 +115,12 @@ Strings y TTL:
 
 - `PING [mensaje]`
 - `AUTH password`
+- `HELLO 2 [AUTH default password]`
+- `COMMAND [COUNT|DOCS|INFO command...]`
+- `CLIENT ID|SETINFO|SETNAME|GETNAME|INFO|LIST`
+- `SELECT 0`
+- `ECHO message`
+- `QUIT`
 - `INFO [section]`
 - `STATS`
 - `SLOWLOG GET [n]`
