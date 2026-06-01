@@ -4,6 +4,22 @@ Llavero es un almacén clave-valor en memoria escrito en Go, inspirado en Redis.
 Expone un servidor TCP con protocolo RESP2 y soporta strings, listas, hashes,
 sets, TTL, snapshots a disco y pub/sub.
 
+## Instalación
+
+Puedes instalar los binarios precompilados en sistemas Linux (amd64 y arm64) usando el script de instalación. 
+
+**Instalar solo el cliente (`llavero-cli`):**
+Ideal para probar en contenedores Docker o si solo necesitas conectarte a un servidor remoto.
+```bash
+curl -fsSL https://raw.githubusercontent.com/orvixapp/llavero/main/install.sh | bash -s -- --cli-only
+```
+
+**Instalar el servidor completo (`llavero` y `llavero-cli`):**
+Instala los binarios, crea el usuario del sistema y configura un servicio `systemd` para que se ejecute en segundo plano. Requiere privilegios de root (por ejemplo, con `sudo`).
+```bash
+curl -fsSL https://raw.githubusercontent.com/orvixapp/llavero/main/install.sh | bash
+```
+
 ## Ejecutar
 
 ```bash
