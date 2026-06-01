@@ -2,7 +2,7 @@
 
 set -e
 
-REPO="cesardev31/llavero"
+REPO="orvixapp/llavero"
 RAW_BASE_URL="https://raw.githubusercontent.com/$REPO/main"
 
 # Parsear argumentos
