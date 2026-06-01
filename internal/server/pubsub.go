@@ -59,10 +59,14 @@ func pubSubReply(kind, channel string, count int) protocol.Reply {
 // Envía las respuestas directamente y devuelve nil.
 func (s *Server) cmdSubscribe(c *client, args [][]byte) protocol.Reply {
 	if len(args) < 1 {
-		return protocol.ErrorReply{Msg: "ERR SUBSCRIBE requiere al menos 1 canal"}
+		return protocol.ErrorReply{Msg: "ERR SUBSCRIBE requires at least one channel"}
 	}
+	const maxSubscriptionsPerClient = 1000
 	for _, ch := range args {
 		channel := string(ch)
+		if len(c.subs) >= maxSubscriptionsPerClient {
+			return protocol.ErrorReply{Msg: "ERR max subscriptions per client reached"}
+		}
 		s.broker.Subscribe(c, channel)
 		c.subs[channel] = struct{}{}
 		_ = c.send(pubSubReply("subscribe", channel, len(c.subs)))
@@ -102,7 +106,7 @@ func (s *Server) cmdUnsubscribe(c *client, args [][]byte) protocol.Reply {
 // cmdPublish entrega un mensaje a los suscriptores del canal.
 func (s *Server) cmdPublish(args [][]byte) protocol.Reply {
 	if len(args) != 2 {
-		return protocol.ErrorReply{Msg: "ERR PUBLISH requiere canal y mensaje"}
+		return protocol.ErrorReply{Msg: "ERR PUBLISH requires channel and message"}
 	}
 	n := s.broker.Publish(string(args[0]), args[1])
 	return protocol.IntReply{N: int64(n)}

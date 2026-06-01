@@ -635,6 +635,11 @@ func TestCloseDrainsActiveConnections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dial -> %v", err)
 	}
+	// Send PING and read PONG to guarantee the connection is fully established and tracked
+	conn.Write([]byte("*1\r\n$4\r\nPING\r\n"))
+	buf := make([]byte, 1024)
+	conn.Read(buf)
+
 	done := make(chan error, 1)
 	go func() { done <- s.Close() }()
 
@@ -786,7 +791,7 @@ func TestAuthRequiresPasswordBeforeCommands(t *testing.T) {
 	if got := sendCommand(t, addr, "GET", "k"); got != "-NOAUTH Authentication required." {
 		t.Fatalf("GET sin AUTH -> %q", got)
 	}
-	if got := sendCommand(t, addr, "AUTH", "mal"); got != "-ERR contraseña inválida" {
+	if got := sendCommand(t, addr, "AUTH", "mal"); got != "-ERR invalid password" {
 		t.Fatalf("AUTH mal -> %q", got)
 	}
 
@@ -816,7 +821,7 @@ func TestAuthRequiresPasswordBeforeCommands(t *testing.T) {
 
 func TestAuthNotRequiredByDefault(t *testing.T) {
 	addr := startTestServer(t)
-	if got := sendCommand(t, addr, "AUTH", "anything"); got != "-ERR AUTH no requerido" {
+	if got := sendCommand(t, addr, "AUTH", "anything"); got != "-ERR AUTH not required" {
 		t.Fatalf("AUTH sin password configurado -> %q", got)
 	}
 	if got := sendCommand(t, addr, "PING"); got != "+PONG" {

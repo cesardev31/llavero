@@ -136,6 +136,6 @@ func (RESP) Encode(w io.Writer, reply Reply) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("tipo de respuesta desconocido: %T", reply)
+		return fmt.Errorf("unknown reply type: %T", reply)
 	}
 }

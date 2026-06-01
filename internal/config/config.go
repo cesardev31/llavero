@@ -44,7 +44,7 @@ func Default() Config {
 
 // LoadFile carga pares key=value. Líneas vacías y comentarios (#) se ignoran.
 func LoadFile(path string) (Config, error) {
-	cfg := Config{}
+	cfg := Default()
 	if err := cfg.ApplyFile(path); err != nil {
 		return cfg, err
 	}
@@ -72,7 +72,7 @@ func (c *Config) ApplyFile(path string) error {
 		}
 		key, value, ok := strings.Cut(line, "=")
 		if !ok {
-			return fmt.Errorf("%s:%d: esperaba key=value", path, lineNo)
+			return fmt.Errorf("%s:%d: expected key=value", path, lineNo)
 		}
 		if err := c.Set(strings.TrimSpace(key), strings.TrimSpace(value)); err != nil {
 			return fmt.Errorf("%s:%d: %w", path, lineNo, err)
@@ -139,6 +139,9 @@ func (c *Config) Set(key, value string) error {
 		if err != nil {
 			return err
 		}
+		if n < 0 {
+			return fmt.Errorf("max_connections must not be negative")
+		}
 		c.MaxConnections = n
 	case "read_timeout":
 		d, err := time.ParseDuration(value)
@@ -157,6 +160,9 @@ func (c *Config) Set(key, value string) error {
 		if err != nil {
 			return err
 		}
+		if n < 0 {
+			return fmt.Errorf("max_memory must not be negative")
+		}
 		c.MaxMemoryBytes = n
 	case "slowlog_threshold":
 		d, err := time.ParseDuration(value)
@@ -169,6 +175,9 @@ func (c *Config) Set(key, value string) error {
 		if err != nil {
 			return err
 		}
+		if n < 0 {
+			return fmt.Errorf("slowlog_max_len must not be negative")
+		}
 		c.SlowLogMaxLen = n
 	case "shutdown_timeout":
 		d, err := time.ParseDuration(value)
@@ -177,7 +186,7 @@ func (c *Config) Set(key, value string) error {
 		}
 		c.ShutdownTimeout = d
 	default:
-		return fmt.Errorf("clave desconocida %q", key)
+		return fmt.Errorf("unknown key %q", key)
 	}
 	return nil
 }

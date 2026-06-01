@@ -19,21 +19,21 @@ var commandNames = []string{
 
 func (s *Server) cmdEcho(args [][]byte) protocol.Reply {
 	if len(args) != 1 {
-		return protocol.ErrorReply{Msg: "ERR ECHO requiere 1 argumento"}
+		return protocol.ErrorReply{Msg: "ERR ECHO requires exactly one argument"}
 	}
 	return protocol.BulkReply{Value: args[0]}
 }
 
 func (s *Server) cmdHealth(args [][]byte) protocol.Reply {
 	if len(args) != 0 {
-		return protocol.ErrorReply{Msg: "ERR HEALTH no recibe argumentos"}
+		return protocol.ErrorReply{Msg: "ERR HEALTH takes no arguments"}
 	}
 	return protocol.StatusReply{Msg: "OK"}
 }
 
 func (s *Server) cmdSelect(args [][]byte) protocol.Reply {
 	if len(args) != 1 {
-		return protocol.ErrorReply{Msg: "ERR SELECT requiere 1 argumento"}
+		return protocol.ErrorReply{Msg: "ERR SELECT requires exactly one argument"}
 	}
 	if string(args[0]) != "0" {
 		return protocol.ErrorReply{Msg: "ERR DB index is out of range"}
@@ -43,7 +43,7 @@ func (s *Server) cmdSelect(args [][]byte) protocol.Reply {
 
 func (s *Server) cmdQuit(c *client, args [][]byte) protocol.Reply {
 	if len(args) != 0 {
-		return protocol.ErrorReply{Msg: "ERR QUIT no recibe argumentos"}
+		return protocol.ErrorReply{Msg: "ERR QUIT takes no arguments"}
 	}
 	c.closeAfterReply = true
 	return protocol.StatusReply{Msg: "OK"}
@@ -51,19 +51,19 @@ func (s *Server) cmdQuit(c *client, args [][]byte) protocol.Reply {
 
 func (s *Server) cmdHello(c *client, args [][]byte) protocol.Reply {
 	if len(args) > 0 && string(args[0]) != "2" {
-		return protocol.ErrorReply{Msg: "NOPROTO Llavero soporta RESP2"}
+		return protocol.ErrorReply{Msg: "NOPROTO Llavero supports RESP2 only"}
 	}
 	authedByHello := false
 	for i := 1; i < len(args); i++ {
 		if strings.EqualFold(string(args[i]), "AUTH") {
 			if s.authPassword == "" {
-				return protocol.ErrorReply{Msg: "ERR AUTH no requerido"}
+				return protocol.ErrorReply{Msg: "ERR AUTH not required"}
 			}
 			if i+2 >= len(args) {
-				return protocol.ErrorReply{Msg: "ERR HELLO AUTH requiere usuario y contraseña"}
+				return protocol.ErrorReply{Msg: "ERR HELLO AUTH requires username and password"}
 			}
 			if subtle.ConstantTimeCompare(args[i+2], []byte(s.authPassword)) != 1 {
-				return protocol.ErrorReply{Msg: "ERR contraseña inválida"}
+				return protocol.ErrorReply{Msg: "ERR invalid password"}
 			}
 			c.authed = true
 			authedByHello = true
@@ -100,7 +100,7 @@ func (s *Server) cmdCommand(args [][]byte) protocol.Reply {
 	switch strings.ToUpper(string(args[0])) {
 	case "COUNT":
 		if len(args) != 1 {
-			return protocol.ErrorReply{Msg: "ERR COMMAND COUNT no recibe argumentos"}
+			return protocol.ErrorReply{Msg: "ERR COMMAND COUNT takes no arguments"}
 		}
 		return protocol.IntReply{N: int64(len(commandNames))}
 	case "DOCS":
@@ -119,7 +119,7 @@ func (s *Server) cmdCommand(args [][]byte) protocol.Reply {
 	case "GETKEYS":
 		return protocol.ArrayReply{}
 	default:
-		return protocol.ErrorReply{Msg: "ERR subcomando COMMAND desconocido"}
+		return protocol.ErrorReply{Msg: "ERR unknown COMMAND subcommand"}
 	}
 }
 
@@ -167,40 +167,40 @@ func knownCommand(name string) bool {
 
 func (s *Server) cmdClient(args [][]byte) protocol.Reply {
 	if len(args) < 1 {
-		return protocol.ErrorReply{Msg: "ERR CLIENT requiere subcomando"}
+		return protocol.ErrorReply{Msg: "ERR CLIENT requires a subcommand"}
 	}
 	switch strings.ToUpper(string(args[0])) {
 	case "ID":
 		if len(args) != 1 {
-			return protocol.ErrorReply{Msg: "ERR CLIENT ID no recibe argumentos"}
+			return protocol.ErrorReply{Msg: "ERR CLIENT ID takes no arguments"}
 		}
 		return protocol.IntReply{N: 1}
 	case "SETINFO":
 		if len(args) != 3 {
-			return protocol.ErrorReply{Msg: "ERR CLIENT SETINFO requiere campo y valor"}
+			return protocol.ErrorReply{Msg: "ERR CLIENT SETINFO requires field and value"}
 		}
 		return protocol.StatusReply{Msg: "OK"}
 	case "SETNAME":
 		if len(args) != 2 {
-			return protocol.ErrorReply{Msg: "ERR CLIENT SETNAME requiere nombre"}
+			return protocol.ErrorReply{Msg: "ERR CLIENT SETNAME requires a name"}
 		}
 		return protocol.StatusReply{Msg: "OK"}
 	case "GETNAME":
 		if len(args) != 1 {
-			return protocol.ErrorReply{Msg: "ERR CLIENT GETNAME no recibe argumentos"}
+			return protocol.ErrorReply{Msg: "ERR CLIENT GETNAME takes no arguments"}
 		}
 		return protocol.BulkReply{Null: true}
 	case "INFO":
 		if len(args) != 1 {
-			return protocol.ErrorReply{Msg: "ERR CLIENT INFO no recibe argumentos"}
+			return protocol.ErrorReply{Msg: "ERR CLIENT INFO takes no arguments"}
 		}
 		return protocol.BulkReply{Value: []byte("id=1 name= addr= laddr= fd=-1 age=0 idle=0 flags=N db=0\n")}
 	case "LIST":
 		if len(args) != 1 {
-			return protocol.ErrorReply{Msg: "ERR CLIENT LIST no recibe argumentos"}
+			return protocol.ErrorReply{Msg: "ERR CLIENT LIST takes no arguments"}
 		}
 		return protocol.BulkReply{Value: []byte("id=1 addr= flags=N db=0\n")}
 	default:
-		return protocol.ErrorReply{Msg: "ERR subcomando CLIENT desconocido"}
+		return protocol.ErrorReply{Msg: "ERR unknown CLIENT subcommand"}
 	}
 }

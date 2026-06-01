@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"math"
 	"strconv"
 	"time"
 )
@@ -31,6 +32,9 @@ func (s *Store) IncrBy(key string, delta int64) (int64, error) {
 	} else {
 		e = &entry{}
 		sh.data[key] = e
+	}
+	if (delta > 0 && n > math.MaxInt64-delta) || (delta < 0 && n < math.MinInt64-delta) {
+		return 0, ErrNotInteger
 	}
 	n += delta
 	e.value = []byte(strconv.FormatInt(n, 10))

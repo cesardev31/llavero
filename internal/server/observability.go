@@ -123,14 +123,14 @@ func redactCommand(cmd protocol.Command) []string {
 
 func (s *Server) cmdInfo(args [][]byte) protocol.Reply {
 	if len(args) > 1 {
-		return protocol.ErrorReply{Msg: "ERR INFO recibe cero o una sección"}
+		return protocol.ErrorReply{Msg: "ERR INFO takes zero or one section"}
 	}
 	return protocol.BulkReply{Value: []byte(s.infoString())}
 }
 
 func (s *Server) cmdStats(args [][]byte) protocol.Reply {
 	if len(args) != 0 {
-		return protocol.ErrorReply{Msg: "ERR STATS no recibe argumentos"}
+		return protocol.ErrorReply{Msg: "ERR STATS takes no arguments"}
 	}
 	return protocol.BulkReply{Value: []byte(s.infoString())}
 }
@@ -188,12 +188,12 @@ func boolInt(v bool) int {
 
 func (s *Server) cmdSlowLog(args [][]byte) protocol.Reply {
 	if len(args) < 1 {
-		return protocol.ErrorReply{Msg: "ERR SLOWLOG requiere subcomando"}
+		return protocol.ErrorReply{Msg: "ERR SLOWLOG requires a subcommand"}
 	}
 	switch strings.ToUpper(string(args[0])) {
 	case "LEN":
 		if len(args) != 1 {
-			return protocol.ErrorReply{Msg: "ERR SLOWLOG LEN no recibe argumentos"}
+			return protocol.ErrorReply{Msg: "ERR SLOWLOG LEN takes no arguments"}
 		}
 		s.metrics.mu.Lock()
 		n := len(s.metrics.slowLog)
@@ -201,7 +201,7 @@ func (s *Server) cmdSlowLog(args [][]byte) protocol.Reply {
 		return protocol.IntReply{N: int64(n)}
 	case "RESET":
 		if len(args) != 1 {
-			return protocol.ErrorReply{Msg: "ERR SLOWLOG RESET no recibe argumentos"}
+			return protocol.ErrorReply{Msg: "ERR SLOWLOG RESET takes no arguments"}
 		}
 		s.metrics.mu.Lock()
 		s.metrics.slowLog = nil
@@ -210,18 +210,18 @@ func (s *Server) cmdSlowLog(args [][]byte) protocol.Reply {
 	case "GET":
 		limit := s.slowLogMaxLen
 		if len(args) > 2 {
-			return protocol.ErrorReply{Msg: "ERR SLOWLOG GET recibe cero o un límite"}
+			return protocol.ErrorReply{Msg: "ERR SLOWLOG GET takes zero or one limit"}
 		}
 		if len(args) == 2 {
 			n, err := strconv.Atoi(string(args[1]))
 			if err != nil || n < 0 {
-				return protocol.ErrorReply{Msg: "ERR límite de SLOWLOG inválido"}
+				return protocol.ErrorReply{Msg: "ERR invalid SLOWLOG limit"}
 			}
 			limit = n
 		}
 		return s.slowLogReply(limit)
 	default:
-		return protocol.ErrorReply{Msg: "ERR subcomando SLOWLOG desconocido"}
+		return protocol.ErrorReply{Msg: "ERR unknown SLOWLOG subcommand"}
 	}
 }
 

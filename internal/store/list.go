@@ -31,9 +31,13 @@ func (s *Store) LPush(key string, vals ...[]byte) (int, error) {
 	if !isList {
 		return 0, ErrWrongType
 	}
-	for _, v := range vals {
-		list = append([][]byte{v}, list...)
+	// Prepend all values in a single allocation to avoid O(n*m) copies.
+	newList := make([][]byte, len(vals)+len(list))
+	for i, v := range vals {
+		newList[len(vals)-1-i] = v
 	}
+	copy(newList[len(vals):], list)
+	list = newList
 	e.value = list
 	return len(list), nil
 }

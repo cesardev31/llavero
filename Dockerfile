@@ -11,4 +11,4 @@ COPY --from=build /out/llavero /usr/local/bin/llavero
 COPY --from=build /out/llavero-cli /usr/local/bin/llavero-cli
 EXPOSE 6380
 ENTRYPOINT ["/usr/local/bin/llavero"]
-CMD ["-addr", "0.0.0.0:6380", "-snapshot", "/data/llavero.snapshot"]
+CMD ["-addr", "0.0.0.0:6380", "-snapshot", "/data/llavero.snapshot", "-max-connections", "10000", "-read-timeout", "300s", "-write-timeout", "60s"]

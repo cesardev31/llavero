@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,33 +17,33 @@ import (
 func main() {
 	var cfgPath string
 	flags := config.Default()
-	flag.StringVar(&cfgPath, "config", "", "archivo de configuración key=value")
-	flag.StringVar(&flags.Addr, "addr", flags.Addr, "dirección TCP de escucha")
-	flag.StringVar(&flags.SnapshotPath, "snapshot", flags.SnapshotPath, "archivo de snapshot; vacío desactiva persistencia")
-	flag.DurationVar(&flags.SaveInterval, "save-interval", 0, "intervalo de snapshot automático; 0 lo desactiva")
-	flag.StringVar(&flags.AOFPath, "aof", "", "archivo append-only; vacío desactiva AOF")
-	flag.StringVar(&flags.AOFSync, "aof-fsync", flags.AOFSync, "política fsync del AOF: always, everysec o no")
-	flag.StringVar(&flags.AuthPassword, "requirepass", "", "contraseña requerida para AUTH; también puede venir de LLAVERO_REQUIREPASS")
-	flag.StringVar(&flags.TLSCertPath, "tls-cert", "", "certificado TLS PEM; requiere -tls-key")
-	flag.StringVar(&flags.TLSKeyPath, "tls-key", "", "llave TLS PEM; requiere -tls-cert")
-	flag.IntVar(&flags.MaxConnections, "max-connections", 0, "máximo de conexiones simultáneas; 0 lo desactiva")
-	flag.DurationVar(&flags.ReadTimeout, "read-timeout", 0, "timeout de lectura por comando; 0 lo desactiva")
-	flag.DurationVar(&flags.WriteTimeout, "write-timeout", 0, "timeout de escritura por respuesta/pubsub; 0 lo desactiva")
-	flag.Int64Var(&flags.MaxMemoryBytes, "max-memory", 0, "límite aproximado de memoria para claves/valores; 0 lo desactiva")
-	flag.DurationVar(&flags.SlowLogThreshold, "slowlog-threshold", 0, "latencia mínima para registrar en SLOWLOG; 0 lo desactiva")
-	flag.IntVar(&flags.SlowLogMaxLen, "slowlog-max-len", flags.SlowLogMaxLen, "máximo de entradas retenidas en SLOWLOG")
-	flag.DurationVar(&flags.ShutdownTimeout, "shutdown-timeout", flags.ShutdownTimeout, "tiempo máximo para drenar conexiones durante apagado")
+	flag.StringVar(&cfgPath, "config", "", "key=value configuration file")
+	flag.StringVar(&flags.Addr, "addr", flags.Addr, "TCP listen address")
+	flag.StringVar(&flags.SnapshotPath, "snapshot", flags.SnapshotPath, "snapshot file; empty disables persistence")
+	flag.DurationVar(&flags.SaveInterval, "save-interval", 0, "automatic snapshot interval; 0 disables it")
+	flag.StringVar(&flags.AOFPath, "aof", "", "append-only file; empty disables AOF")
+	flag.StringVar(&flags.AOFSync, "aof-fsync", flags.AOFSync, "AOF fsync policy: always, everysec or no")
+	flag.StringVar(&flags.AuthPassword, "requirepass", "", "password required for AUTH; can also be provided via LLAVERO_REQUIREPASS")
+	flag.StringVar(&flags.TLSCertPath, "tls-cert", "", "TLS PEM certificate; requires -tls-key")
+	flag.StringVar(&flags.TLSKeyPath, "tls-key", "", "TLS PEM key; requires -tls-cert")
+	flag.IntVar(&flags.MaxConnections, "max-connections", 0, "max simultaneous connections; 0 disables it")
+	flag.DurationVar(&flags.ReadTimeout, "read-timeout", 0, "read timeout per command; 0 disables it")
+	flag.DurationVar(&flags.WriteTimeout, "write-timeout", 0, "write timeout per response/pubsub; 0 disables it")
+	flag.Int64Var(&flags.MaxMemoryBytes, "max-memory", 0, "approximate memory limit for keys/values; 0 disables it")
+	flag.DurationVar(&flags.SlowLogThreshold, "slowlog-threshold", 0, "minimum latency to log in SLOWLOG; 0 disables it")
+	flag.IntVar(&flags.SlowLogMaxLen, "slowlog-max-len", flags.SlowLogMaxLen, "max entries retained in SLOWLOG")
+	flag.DurationVar(&flags.ShutdownTimeout, "shutdown-timeout", flags.ShutdownTimeout, "max time to drain connections during shutdown")
 	flag.Parse()
 
 	visited := visitedFlags()
 	cfg := config.Default()
 	if cfgPath != "" {
 		if err := cfg.ApplyFile(cfgPath); err != nil {
-			log.Fatalf("no se pudo cargar config: %v", err)
+			log.Fatalf("failed to load config: %v", err)
 		}
 	}
 	if err := cfg.ApplyEnv(); err != nil {
-		log.Fatalf("configuración de entorno inválida: %v", err)
+		log.Fatalf("invalid environment configuration: %v", err)
 	}
 	cfg = mergeVisitedFlags(cfg, flags, visited)
 
@@ -51,12 +53,15 @@ func main() {
 		cfg.SnapshotPath = ""
 	}
 
+	validatePath("snapshot", cfg.SnapshotPath)
+	validatePath("aof", cfg.AOFPath)
+
 	s, err := server.NewWithOptions(cfg.ServerOptions())
 	if err != nil {
-		log.Fatalf("no se pudo crear servidor: %v", err)
+		log.Fatalf("failed to create server: %v", err)
 	}
 	if err := s.Listen(); err != nil {
-		log.Fatalf("no se pudo escuchar: %v", err)
+		log.Fatalf("failed to listen: %v", err)
 	}
 	log.Printf("event=start addr=%q", s.Addr())
 
@@ -77,6 +82,19 @@ func main() {
 		log.Fatalf("event=server_stopped error=%q", err)
 	}
 	log.Println("event=shutdown_complete")
+}
+
+// validatePath rechaza rutas con componentes ".." para evitar path traversal.
+func validatePath(name, path string) {
+	if path == "" {
+		return
+	}
+	cleaned := filepath.Clean(path)
+	for _, part := range strings.Split(cleaned, string(filepath.Separator)) {
+		if part == ".." {
+			log.Fatalf("%s path must not contain '..': %s", name, path)
+		}
+	}
 }
 
 func visitedFlags() map[string]bool {

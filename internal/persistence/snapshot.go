@@ -18,16 +18,16 @@ var snapshotMagic = []byte{'L', 'L', 'A', 'V', 'E', 'R', 'O', 1}
 
 const (
 	maxSnapshotEntries = 1024 * 1024
-	maxSnapshotField   = 512 * 1024 * 1024
+	maxSnapshotField   = 64 * 1024 * 1024
 )
 
 // Save escribe un snapshot atómico del store en path.
 func Save(path string, s *store.Store) error {
 	if path == "" {
-		return errors.New("ruta de snapshot vacía")
+		return errors.New("empty snapshot path")
 	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
@@ -68,7 +68,7 @@ func Save(path string, s *store.Store) error {
 // Load carga un snapshot en el store. Si el archivo no existe, no hace nada.
 func Load(path string, s *store.Store) error {
 	if path == "" {
-		return errors.New("ruta de snapshot vacía")
+		return errors.New("empty snapshot path")
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -138,7 +138,7 @@ func encodeEntry(w io.Writer, entry store.SnapshotEntry) error {
 	case store.ValueSet:
 		return writeByteList(w, entry.Set)
 	default:
-		return fmt.Errorf("tipo de snapshot desconocido: %q", byte(entry.Type))
+		return fmt.Errorf("unknown snapshot type: %q", byte(entry.Type))
 	}
 }
 
@@ -149,14 +149,14 @@ func Decode(r io.Reader) ([]store.SnapshotEntry, error) {
 		return nil, err
 	}
 	if string(header) != string(snapshotMagic) {
-		return nil, errors.New("snapshot inválido: cabecera desconocida")
+		return nil, errors.New("invalid snapshot: unknown header")
 	}
 	count, err := readU64(r)
 	if err != nil {
 		return nil, err
 	}
 	if count > maxSnapshotEntries {
-		return nil, fmt.Errorf("snapshot inválido: demasiadas entradas (%d)", count)
+		return nil, fmt.Errorf("invalid snapshot: too many entries (%d)", count)
 	}
 	entries := make([]store.SnapshotEntry, 0, count)
 	for i := uint64(0); i < count; i++ {
@@ -197,7 +197,7 @@ func decodeEntry(r io.Reader) (store.SnapshotEntry, error) {
 	case store.ValueSet:
 		entry.Set, err = readByteList(r)
 	default:
-		err = fmt.Errorf("snapshot inválido: tipo desconocido %q", typ[0])
+		err = fmt.Errorf("invalid snapshot: unknown type %q", typ[0])
 	}
 	return entry, err
 }
@@ -220,7 +220,7 @@ func readByteList(r io.Reader) ([][]byte, error) {
 		return nil, err
 	}
 	if count > maxSnapshotEntries {
-		return nil, fmt.Errorf("snapshot inválido: demasiados elementos (%d)", count)
+		return nil, fmt.Errorf("invalid snapshot: too many elements (%d)", count)
 	}
 	out := make([][]byte, 0, count)
 	for i := uint64(0); i < count; i++ {
@@ -239,7 +239,7 @@ func readHash(r io.Reader) (map[string][]byte, error) {
 		return nil, err
 	}
 	if count > maxSnapshotEntries {
-		return nil, fmt.Errorf("snapshot inválido: demasiados campos (%d)", count)
+		return nil, fmt.Errorf("invalid snapshot: too many fields (%d)", count)
 	}
 	out := make(map[string][]byte, count)
 	for i := uint64(0); i < count; i++ {
@@ -270,7 +270,7 @@ func readBytes(r io.Reader) ([]byte, error) {
 		return nil, err
 	}
 	if n > maxSnapshotField {
-		return nil, fmt.Errorf("snapshot inválido: campo demasiado grande (%d bytes)", n)
+		return nil, fmt.Errorf("invalid snapshot: field too large (%d bytes)", n)
 	}
 	out := make([]byte, int(n))
 	_, err = io.ReadFull(r, out)

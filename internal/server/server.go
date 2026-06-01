@@ -53,6 +53,7 @@ type Server struct {
 	slowLogThreshold time.Duration
 	slowLogMaxLen    int
 	shutdownTimeout  time.Duration
+	authLimit        *authLimiter
 }
 
 // Options configura el servidor.
@@ -89,22 +90,22 @@ func NewWithOptions(opts Options) (*Server, error) {
 		opts.Addr = "127.0.0.1:6380"
 	}
 	if opts.SnapshotPath != "" && opts.AOFPath != "" {
-		return nil, errors.New("snapshot y AOF no se pueden activar juntos todavía")
+		return nil, errors.New("snapshot and AOF cannot be enabled together yet")
 	}
 	if opts.MaxConnections < 0 {
-		return nil, errors.New("MaxConnections no puede ser negativo")
+		return nil, errors.New("MaxConnections must not be negative")
 	}
 	if opts.MaxMemoryBytes < 0 {
-		return nil, errors.New("MaxMemoryBytes no puede ser negativo")
+		return nil, errors.New("MaxMemoryBytes must not be negative")
 	}
 	if opts.SlowLogThreshold < 0 {
-		return nil, errors.New("SlowLogThreshold no puede ser negativo")
+		return nil, errors.New("SlowLogThreshold must not be negative")
 	}
 	if opts.SlowLogMaxLen < 0 {
-		return nil, errors.New("SlowLogMaxLen no puede ser negativo")
+		return nil, errors.New("SlowLogMaxLen must not be negative")
 	}
 	if opts.ShutdownTimeout < 0 {
-		return nil, errors.New("ShutdownTimeout no puede ser negativo")
+		return nil, errors.New("ShutdownTimeout must not be negative")
 	}
 	slowLogMaxLen := opts.SlowLogMaxLen
 	if slowLogMaxLen == 0 {
@@ -175,13 +176,14 @@ func NewWithOptions(opts Options) (*Server, error) {
 		slowLogThreshold: opts.SlowLogThreshold,
 		slowLogMaxLen:    slowLogMaxLen,
 		shutdownTimeout:  opts.ShutdownTimeout,
+		authLimit:        newAuthLimiter(),
 	}, nil
 }
 
 // Listen abre el socket TCP. Debe llamarse antes de Serve.
 func (s *Server) Listen() error {
 	if (s.tlsCertPath == "") != (s.tlsKeyPath == "") {
-		return errors.New("TLS requiere cert y key")
+		return errors.New("TLS requires both cert and key")
 	}
 	var ln net.Listener
 	var err error
@@ -359,7 +361,7 @@ func (s *Server) saveLoop() {
 			return
 		case <-t.C:
 			if err := persistence.Save(s.snapshotPath, s.store); err != nil {
-				log.Printf("no se pudo guardar snapshot: %v", err)
+				log.Printf("failed to save snapshot: %v", err)
 			}
 		}
 	}
@@ -389,7 +391,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	defer s.unsubscribeAll(c)
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("conexión %s recuperada de pánico: %v", conn.RemoteAddr(), r)
+			log.Printf("connection %s recovered from panic: %v", conn.RemoteAddr(), r)
 		}
 	}()
 
@@ -432,6 +434,8 @@ func (s *Server) handleCommand(c *client, cmd protocol.Command) protocol.Reply {
 		return s.cmdAuth(c, cmd.Args)
 	case "HELLO":
 		return s.cmdHello(c, cmd.Args)
+	case "QUIT":
+		return s.cmdQuit(c, cmd.Args)
 	}
 	if s.authRequired(c) {
 		return protocol.ErrorReply{Msg: "NOAUTH Authentication required."}
@@ -447,8 +451,7 @@ func (s *Server) handleCommand(c *client, cmd protocol.Command) protocol.Reply {
 		return s.cmdHealth(cmd.Args)
 	case "INFO":
 		return s.cmdInfo(cmd.Args)
-	case "QUIT":
-		return s.cmdQuit(c, cmd.Args)
+
 	case "SELECT":
 		return s.cmdSelect(cmd.Args)
 	case "STATS":

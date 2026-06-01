@@ -1,2 +1,6 @@
 /tmp/
 llavero.snapshot
+
+build/
+dist/
+*.egg-info/

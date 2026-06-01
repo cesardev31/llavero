@@ -67,7 +67,10 @@ func (b *Broker) Publish(channel string, payload []byte) int {
 	b.mu.RUnlock()
 
 	for _, sub := range targets {
-		sub.Deliver(channel, payload)
+		func() {
+			defer func() { recover() }()
+			sub.Deliver(channel, payload)
+		}()
 	}
 	return len(targets)
 }

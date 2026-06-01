@@ -34,7 +34,7 @@ func ParseFsyncPolicy(raw string) (FsyncPolicy, error) {
 	case FsyncNo:
 		return FsyncNo, nil
 	default:
-		return "", fmt.Errorf("política AOF inválida %q (usa always, everysec o no)", raw)
+		return "", fmt.Errorf("invalid AOF policy %q (use always, everysec or no)", raw)
 	}
 }
 
@@ -49,12 +49,12 @@ type AOF struct {
 // OpenAOF abre o crea un AOF para append.
 func OpenAOF(path string, policy FsyncPolicy) (*AOF, error) {
 	if path == "" {
-		return nil, errors.New("ruta AOF vacía")
+		return nil, errors.New("empty AOF path")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, err
 	}

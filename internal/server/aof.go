@@ -155,7 +155,7 @@ func normalizedCommand(name string, args [][]byte) protocol.Command {
 
 func replayAOFCommand(disp dispatchFunc, cmd protocol.Command) error {
 	if _, ok := aofCommand(cmd); !ok {
-		return fmt.Errorf("AOF contiene comando no reproducible: %s", cmd.Name)
+		return fmt.Errorf("AOF contains non-reproducible command: %s", cmd.Name)
 	}
 	disp(cmd)
 	return nil

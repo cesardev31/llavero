@@ -30,12 +30,17 @@ type reply struct {
 	null  bool
 }
 
+const (
+	maxClientBulkSize = 512 * 1024 * 1024 // 512 MiB
+	maxArrayDepth     = 512
+)
+
 func main() {
-	addr := flag.String("addr", "127.0.0.1:6380", "dirección TCP de Llavero")
-	auth := flag.String("auth", "", "contraseña para AUTH antes del comando")
-	useTLS := flag.Bool("tls", false, "conectar usando TLS")
-	tlsSkipVerify := flag.Bool("tls-skip-verify", false, "aceptar certificados TLS no confiables")
-	tlsServerName := flag.String("tls-server-name", "", "nombre de servidor para verificar TLS")
+	addr := flag.String("addr", "127.0.0.1:6380", "Llavero TCP address")
+	auth := flag.String("auth", "", "password for AUTH before command")
+	useTLS := flag.Bool("tls", false, "connect using TLS")
+	tlsSkipVerify := flag.Bool("tls-skip-verify", false, "accept untrusted TLS certificates")
+	tlsServerName := flag.String("tls-server-name", "", "server name for TLS verification")
 	flag.Parse()
 	opts := dialOptions{
 		addr:          *addr,
@@ -156,7 +161,7 @@ func dial(opts dialOptions) (net.Conn, error) {
 	if !opts.tls {
 		conn, err := net.Dial("tcp", opts.addr)
 		if err != nil {
-			return nil, fmt.Errorf("conectar a %s: %w", opts.addr, err)
+			return nil, fmt.Errorf("connect to %s: %w", opts.addr, err)
 		}
 		return conn, nil
 	}
@@ -167,7 +172,7 @@ func dial(opts dialOptions) (net.Conn, error) {
 	}
 	conn, err := tls.Dial("tcp", opts.addr, conf)
 	if err != nil {
-		return nil, fmt.Errorf("conectar TLS a %s: %w", opts.addr, err)
+		return nil, fmt.Errorf("TLS connect to %s: %w", opts.addr, err)
 	}
 	return conn, nil
 }
@@ -219,6 +224,13 @@ func readAndPrint(r *bufio.Reader) error {
 }
 
 func readReply(r *bufio.Reader) (reply, error) {
+	return readReplyDepth(r, 0)
+}
+
+func readReplyDepth(r *bufio.Reader, depth int) (reply, error) {
+	if depth > maxArrayDepth {
+		return reply{}, fmt.Errorf("reply nesting exceeds %d levels", maxArrayDepth)
+	}
 	line, err := r.ReadString('\n')
 	if err != nil {
 		return reply{}, err
@@ -237,10 +249,13 @@ func readReply(r *bufio.Reader) (reply, error) {
 	case '$':
 		n, err := strconv.Atoi(line[1:])
 		if err != nil {
-			return reply{}, fmt.Errorf("bulk inválido: %q", line)
+			return reply{}, fmt.Errorf("invalid bulk: %q", line)
 		}
 		if n < 0 {
 			return reply{kind: replyBulk, null: true}, nil
+		}
+		if n > maxClientBulkSize {
+			return reply{}, fmt.Errorf("bulk size %d exceeds limit %d", n, maxClientBulkSize)
 		}
 		buf := make([]byte, n)
 		if _, err := io.ReadFull(r, buf); err != nil {
@@ -253,14 +268,14 @@ func readReply(r *bufio.Reader) (reply, error) {
 	case '*':
 		n, err := strconv.Atoi(line[1:])
 		if err != nil {
-			return reply{}, fmt.Errorf("array inválido: %q", line)
+			return reply{}, fmt.Errorf("invalid array: %q", line)
 		}
 		if n < 0 {
 			return reply{kind: replyArray, null: true}, nil
 		}
 		items := make([]reply, n)
 		for i := range items {
-			item, err := readReply(r)
+			item, err := readReplyDepth(r, depth+1)
 			if err != nil {
 				return reply{}, err
 			}
@@ -268,7 +283,7 @@ func readReply(r *bufio.Reader) (reply, error) {
 		}
 		return reply{kind: replyArray, items: items}, nil
 	default:
-		return reply{}, fmt.Errorf("tipo de respuesta desconocido: %q", line)
+		return reply{}, fmt.Errorf("unknown reply type: %q", line)
 	}
 }
 

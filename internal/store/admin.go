@@ -70,9 +70,14 @@ func (s *Store) Len() int {
 
 // Flush borra todas las claves de todos los shards.
 func (s *Store) Flush() {
+	// Adquirir todos los locks primero para un flush atómico.
 	for _, sh := range s.shards {
 		sh.mu.Lock()
+	}
+	for _, sh := range s.shards {
 		sh.data = make(map[string]*entry)
+	}
+	for _, sh := range s.shards {
 		sh.mu.Unlock()
 	}
 }

@@ -98,28 +98,17 @@ func (s *Store) Set(key string, val []byte) {
 // error=ErrWrongType si la clave contiene un tipo que no es string.
 func (s *Store) Get(key string) (val []byte, exists bool, err error) {
 	sh := s.shardFor(key)
-	now := time.Now()
-
-	sh.mu.RLock()
-	e, ok := sh.data[key]
-	if ok && !e.expired(now) {
-		b, isStr := e.value.([]byte)
-		sh.mu.RUnlock()
-		if !isStr {
-			return nil, false, ErrWrongType
-		}
-		return b, true, nil
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	e, ok := sh.liveEntry(key, time.Now())
+	if !ok {
+		return nil, false, nil
 	}
-	sh.mu.RUnlock()
-
-	if ok {
-		sh.mu.Lock()
-		if e2, ok2 := sh.data[key]; ok2 && e2.expired(time.Now()) {
-			delete(sh.data, key)
-		}
-		sh.mu.Unlock()
+	b, isStr := e.value.([]byte)
+	if !isStr {
+		return nil, false, ErrWrongType
 	}
-	return nil, false, nil
+	return b, true, nil
 }
 
 // Exists indica si la clave existe (de cualquier tipo, con expiración perezosa).

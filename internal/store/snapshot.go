@@ -30,9 +30,12 @@ type SnapshotEntry struct {
 // vencidas se borran perezosamente durante el recorrido.
 func (s *Store) Snapshot() []SnapshotEntry {
 	now := time.Now()
-	out := make([]SnapshotEntry, 0)
+	// Adquirir todos los locks para una vista consistente point-in-time.
 	for _, sh := range s.shards {
 		sh.mu.Lock()
+	}
+	out := make([]SnapshotEntry, 0)
+	for _, sh := range s.shards {
 		for key, e := range sh.data {
 			if e.expired(now) {
 				delete(sh.data, key)
@@ -43,6 +46,8 @@ func (s *Store) Snapshot() []SnapshotEntry {
 				out = append(out, entry)
 			}
 		}
+	}
+	for _, sh := range s.shards {
 		sh.mu.Unlock()
 	}
 	return out
@@ -80,7 +85,7 @@ func (s *Store) Restore(entries []SnapshotEntry) error {
 	now := time.Now()
 	for _, snap := range entries {
 		if snap.Key == "" {
-			return fmt.Errorf("snapshot con clave vacía")
+			return fmt.Errorf("snapshot with empty key")
 		}
 		if !snap.ExpireAt.IsZero() && snap.ExpireAt.Before(now) {
 			continue
@@ -112,7 +117,7 @@ func valueFromSnapshot(snap SnapshotEntry) (any, error) {
 		}
 		return set, nil
 	default:
-		return nil, fmt.Errorf("tipo de snapshot desconocido: %q", byte(snap.Type))
+		return nil, fmt.Errorf("unknown snapshot type: %q", byte(snap.Type))
 	}
 }
 
