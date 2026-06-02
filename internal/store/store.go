@@ -94,6 +94,20 @@ func (s *Store) Set(key string, val []byte) {
 	sh.data[key] = &entry{value: val}
 }
 
+// SetEx guarda un valor string con una expiración absoluta, de forma atómica,
+// limpiando cualquier TTL o tipo previo. Un expireAt cero significa "sin
+// expiración".
+func (s *Store) SetEx(key string, val []byte, expireAt time.Time) {
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	e := &entry{value: val}
+	if !expireAt.IsZero() {
+		e.expireAt = expireAt
+	}
+	sh.data[key] = e
+}
+
 // Get devuelve el valor string de una clave. exists=false si no existe;
 // error=ErrWrongType si la clave contiene un tipo que no es string.
 func (s *Store) Get(key string) (val []byte, exists bool, err error) {

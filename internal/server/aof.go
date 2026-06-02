@@ -54,7 +54,7 @@ func estimatedGrowth(cmd protocol.Command) int64 {
 	args := cmd.Args
 	switch name {
 	case "SET", "SETNX":
-		if len(args) != 2 {
+		if len(args) < 2 {
 			return 0
 		}
 		return int64(len(args[0]) + len(args[1]))
@@ -92,7 +92,17 @@ func aofCommand(cmd protocol.Command) (protocol.Command, bool) {
 	args := cmd.Args
 	switch name {
 	case "SET":
-		return normalizedCommand(name, args), len(args) == 2
+		if len(args) == 2 {
+			return normalizedCommand(name, args), true
+		}
+		// Normalize SET ... EX/PX/EXAT/PXAT into an absolute PXAT form so AOF
+		// replay sets the same expiry regardless of when it runs.
+		atMS, ok := setExpiryMillis(args[2:])
+		if !ok {
+			return protocol.Command{}, false
+		}
+		norm := [][]byte{args[0], args[1], []byte("PXAT"), []byte(strconv.FormatInt(atMS, 10))}
+		return protocol.Command{Name: "SET", Args: norm}, true
 	case "DEL":
 		return normalizedCommand(name, args), len(args) >= 1
 	case "EXPIRE":
@@ -151,6 +161,30 @@ func aofCommand(cmd protocol.Command) (protocol.Command, bool) {
 
 func normalizedCommand(name string, args [][]byte) protocol.Command {
 	return protocol.Command{Name: name, Args: args}
+}
+
+// setExpiryMillis resolves a single SET expiry option (EX/PX/EXAT/PXAT) to an
+// absolute unix-millis timestamp. opts must be exactly [option, value].
+func setExpiryMillis(opts [][]byte) (int64, bool) {
+	if len(opts) != 2 {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(string(opts[1]), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	switch strings.ToUpper(string(opts[0])) {
+	case "EX":
+		return time.Now().Add(time.Duration(n) * time.Second).UnixMilli(), true
+	case "PX":
+		return time.Now().Add(time.Duration(n) * time.Millisecond).UnixMilli(), true
+	case "EXAT":
+		return time.Unix(n, 0).UnixMilli(), true
+	case "PXAT":
+		return n, true
+	default:
+		return 0, false
+	}
 }
 
 func replayAOFCommand(disp dispatchFunc, cmd protocol.Command) error {
