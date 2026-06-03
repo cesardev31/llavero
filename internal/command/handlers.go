@@ -2,6 +2,7 @@ package command
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"llavero/internal/protocol"
@@ -30,11 +31,51 @@ func cmdGet(s *store.Store, args [][]byte) protocol.Reply {
 }
 
 func cmdSet(s *store.Store, args [][]byte) protocol.Reply {
-	if len(args) != 2 {
+	if len(args) < 2 {
 		return protocol.ErrorReply{Msg: "ERR SET requiere 2 argumentos"}
 	}
-	s.Set(string(args[0]), args[1])
+	expireAt, ok := parseSetExpiry(args[2:])
+	if !ok {
+		return protocol.ErrorReply{Msg: "ERR syntax error"}
+	}
+	s.SetEx(string(args[0]), args[1], expireAt)
 	return protocol.StatusReply{Msg: "OK"}
+}
+
+// parseSetExpiry reads the optional SET expiry options (EX/PX/EXAT/PXAT) from the
+// trailing args. It returns the resolved absolute expiry (zero = none) and false
+// if the options are malformed or mutually exclusive options are combined.
+func parseSetExpiry(opts [][]byte) (time.Time, bool) {
+	var expireAt time.Time
+	set := false
+	for i := 0; i < len(opts); {
+		opt := strings.ToUpper(string(opts[i]))
+		switch opt {
+		case "EX", "PX", "EXAT", "PXAT":
+			if set || i+1 >= len(opts) {
+				return time.Time{}, false
+			}
+			n, err := strconv.ParseInt(string(opts[i+1]), 10, 64)
+			if err != nil {
+				return time.Time{}, false
+			}
+			switch opt {
+			case "EX":
+				expireAt = time.Now().Add(time.Duration(n) * time.Second)
+			case "PX":
+				expireAt = time.Now().Add(time.Duration(n) * time.Millisecond)
+			case "EXAT":
+				expireAt = time.Unix(n, 0)
+			case "PXAT":
+				expireAt = time.UnixMilli(n)
+			}
+			set = true
+			i += 2
+		default:
+			return time.Time{}, false
+		}
+	}
+	return expireAt, true
 }
 
 func cmdDel(s *store.Store, args [][]byte) protocol.Reply {
