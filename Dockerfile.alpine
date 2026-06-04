@@ -1,16 +1,19 @@
-FROM golang:1.26 AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY go.mod ./
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/llavero ./cmd/llavero
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/llavero-cli ./cmd/llavero-cli
-RUN mkdir -p /out/data
 
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build --chown=65532:65532 /out/data /data
+FROM alpine:3.22
+RUN addgroup -S llavero \
+  && adduser -S -D -H -h /data -s /sbin/nologin -G llavero llavero \
+  && mkdir -p /data \
+  && chown llavero:llavero /data
 WORKDIR /data
 COPY --from=build /out/llavero /usr/local/bin/llavero
 COPY --from=build /out/llavero-cli /usr/local/bin/llavero-cli
+USER llavero:llavero
 VOLUME ["/data"]
 EXPOSE 6380
 ENTRYPOINT ["/usr/local/bin/llavero"]
