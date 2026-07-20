@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"llavero/internal/config"
+	"llavero/internal/diagnostics"
 	"llavero/internal/server"
 )
 
@@ -52,6 +53,10 @@ func main() {
 	if cfg.AOFPath != "" && !visited["snapshot"] {
 		cfg.SnapshotPath = ""
 	}
+	pprofServer, err := diagnostics.StartPprofFromEnv("LLAVERO_PPROF_LISTEN", "LLAVERO_PPROF_ALLOW_NON_LOOPBACK")
+	if err != nil {
+		log.Fatalf("failed to start pprof diagnostics: %v", err)
+	}
 
 	validatePath("snapshot", cfg.SnapshotPath)
 	validatePath("aof", cfg.AOFPath)
@@ -70,6 +75,9 @@ func main() {
 	go func() {
 		sig := <-sigCh
 		log.Printf("event=shutdown_signal signal=%q", sig)
+		if pprofServer != nil {
+			_ = pprofServer.Close()
+		}
 		if err := s.Save(); err != nil {
 			log.Printf("event=snapshot_final error=%q", err)
 		} else if cfg.SnapshotPath != "" {

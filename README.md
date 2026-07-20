@@ -63,6 +63,23 @@ Las variables `LLAVERO_*` equivalentes (`LLAVERO_ADDR`,
 `LLAVERO_REQUIREPASS`, `LLAVERO_AOF`, etc.) se aplican después del archivo de
 configuración y antes de los flags explícitos.
 
+Para habilitar pprof de forma privada al ejecutar el binario directamente:
+
+```bash
+LLAVERO_PPROF_LISTEN=127.0.0.1:6062 go run ./cmd/llavero
+```
+
+Dentro de Docker el listener debe aceptar el reenvío del contenedor, pero el
+puerto del host debe permanecer limitado a loopback:
+
+```bash
+docker run \
+  -p 127.0.0.1:6062:6062 \
+  -e LLAVERO_PPROF_LISTEN=0.0.0.0:6062 \
+  -e LLAVERO_PPROF_ALLOW_NON_LOOPBACK=true \
+  llavero
+```
+
 Snapshot y AOF todavía son modos excluyentes. Si se usa `-aof` sin pasar
 `-snapshot`, el servidor desactiva el snapshot por defecto automáticamente:
 

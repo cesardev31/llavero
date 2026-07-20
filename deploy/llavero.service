@@ -7,6 +7,7 @@ Type=simple
 User=llavero
 Group=llavero
 EnvironmentFile=-/etc/llavero/llavero.env
+Environment=LLAVERO_PPROF_LISTEN=127.0.0.1:6062
 WorkingDirectory=/var/lib/llavero
 ExecStart=/usr/local/bin/llavero -config /etc/llavero/llavero.conf
 Restart=on-failure
