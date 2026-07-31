@@ -26,6 +26,7 @@ type Config struct {
 	ReadTimeout      time.Duration
 	WriteTimeout     time.Duration
 	MaxMemoryBytes   int64
+	CommandLog       string
 	SlowLogThreshold time.Duration
 	SlowLogMaxLen    int
 	ShutdownTimeout  time.Duration
@@ -37,6 +38,7 @@ func Default() Config {
 		Addr:            "127.0.0.1:6380",
 		SnapshotPath:    "llavero.snapshot",
 		AOFSync:         "always",
+		CommandLog:      "errors",
 		SlowLogMaxLen:   128,
 		ShutdownTimeout: 5 * time.Second,
 	}
@@ -96,6 +98,7 @@ func (c *Config) ApplyEnv() error {
 		"LLAVERO_READ_TIMEOUT":      "read_timeout",
 		"LLAVERO_WRITE_TIMEOUT":     "write_timeout",
 		"LLAVERO_MAX_MEMORY":        "max_memory",
+		"LLAVERO_COMMAND_LOG":       "command_log",
 		"LLAVERO_SLOWLOG_THRESHOLD": "slowlog_threshold",
 		"LLAVERO_SLOWLOG_MAX_LEN":   "slowlog_max_len",
 		"LLAVERO_SHUTDOWN_TIMEOUT":  "shutdown_timeout",
@@ -164,6 +167,14 @@ func (c *Config) Set(key, value string) error {
 			return fmt.Errorf("max_memory must not be negative")
 		}
 		c.MaxMemoryBytes = n
+	case "command_log":
+		mode := strings.ToLower(strings.TrimSpace(value))
+		switch mode {
+		case "off", "errors", "slow", "all":
+			c.CommandLog = mode
+		default:
+			return fmt.Errorf("command_log must be one of off, errors, slow or all")
+		}
 	case "slowlog_threshold":
 		d, err := time.ParseDuration(value)
 		if err != nil {
@@ -229,6 +240,9 @@ func (c Config) MergeOverlay(overlay Config) Config {
 	if overlay.MaxMemoryBytes != 0 {
 		c.MaxMemoryBytes = overlay.MaxMemoryBytes
 	}
+	if overlay.CommandLog != "" {
+		c.CommandLog = overlay.CommandLog
+	}
 	if overlay.SlowLogThreshold != 0 {
 		c.SlowLogThreshold = overlay.SlowLogThreshold
 	}
@@ -256,6 +270,7 @@ func (c Config) ServerOptions() server.Options {
 		ReadTimeout:      c.ReadTimeout,
 		WriteTimeout:     c.WriteTimeout,
 		MaxMemoryBytes:   c.MaxMemoryBytes,
+		CommandLog:       c.CommandLog,
 		SlowLogThreshold: c.SlowLogThreshold,
 		SlowLogMaxLen:    c.SlowLogMaxLen,
 		ShutdownTimeout:  c.ShutdownTimeout,

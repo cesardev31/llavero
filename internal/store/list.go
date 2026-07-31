@@ -25,12 +25,13 @@ func (s *Store) LPush(key string, vals ...[]byte) (int, error) {
 	e, ok := sh.liveEntry(key, time.Now())
 	if !ok {
 		e = &entry{value: [][]byte{}}
-		sh.data[key] = e
+		sh.setEntry(key, e)
 	}
 	list, isList := e.value.([][]byte)
 	if !isList {
 		return 0, ErrWrongType
 	}
+	before := entryApproxMemory(key, e)
 	// Prepend all values in a single allocation to avoid O(n*m) copies.
 	newList := make([][]byte, len(vals)+len(list))
 	for i, v := range vals {
@@ -39,6 +40,7 @@ func (s *Store) LPush(key string, vals ...[]byte) (int, error) {
 	copy(newList[len(vals):], list)
 	list = newList
 	e.value = list
+	sh.refreshEntryMemory(key, before)
 	return len(list), nil
 }
 
@@ -51,14 +53,16 @@ func (s *Store) RPush(key string, vals ...[]byte) (int, error) {
 	e, ok := sh.liveEntry(key, time.Now())
 	if !ok {
 		e = &entry{value: [][]byte{}}
-		sh.data[key] = e
+		sh.setEntry(key, e)
 	}
 	list, isList := e.value.([][]byte)
 	if !isList {
 		return 0, ErrWrongType
 	}
+	before := entryApproxMemory(key, e)
 	list = append(list, vals...)
 	e.value = list
+	sh.refreshEntryMemory(key, before)
 	return len(list), nil
 }
 
@@ -80,11 +84,13 @@ func (s *Store) LPop(key string) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 	v := list[0]
+	before := entryApproxMemory(key, e)
 	list = list[1:]
 	if len(list) == 0 {
-		delete(sh.data, key)
+		sh.deleteEntry(key)
 	} else {
 		e.value = list
+		sh.refreshEntryMemory(key, before)
 	}
 	return v, true, nil
 }
@@ -107,11 +113,13 @@ func (s *Store) RPop(key string) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 	v := list[len(list)-1]
+	before := entryApproxMemory(key, e)
 	list = list[:len(list)-1]
 	if len(list) == 0 {
-		delete(sh.data, key)
+		sh.deleteEntry(key)
 	} else {
 		e.value = list
+		sh.refreshEntryMemory(key, before)
 	}
 	return v, true, nil
 }

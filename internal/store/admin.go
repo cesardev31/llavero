@@ -76,6 +76,7 @@ func (s *Store) Flush() {
 	}
 	for _, sh := range s.shards {
 		sh.data = make(map[string]*entry)
+		sh.usedMemory = 0
 	}
 	for _, sh := range s.shards {
 		sh.mu.Unlock()

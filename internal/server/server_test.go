@@ -268,6 +268,10 @@ func TestSaveCommandPersistsSnapshot(t *testing.T) {
 	if got := sendCommand(t, addr, "SAVE"); got != "+OK" {
 		t.Fatalf("SAVE -> %q", got)
 	}
+	if info := sendBulkCommand(t, addr, "INFO"); !strings.Contains(info, "snapshot_successes:1") ||
+		!strings.Contains(info, "snapshot_failures:0") {
+		t.Fatalf("INFO did not record successful snapshot:\n%s", info)
+	}
 
 	loaded := store.New(16)
 	if err := persistence.Load(path, loaded); err != nil {
@@ -487,6 +491,21 @@ func TestMaxMemoryRejectsGrowingWrites(t *testing.T) {
 	}
 }
 
+func TestMaxMemoryAllowsOverwriteWithinLimit(t *testing.T) {
+	s, addr := startTestServerWithOptions(t, Options{MaxMemoryBytes: 4})
+	t.Cleanup(func() { s.Close() })
+
+	if got := sendCommand(t, addr, "SET", "k", "v"); got != "+OK" {
+		t.Fatalf("initial SET -> %q", got)
+	}
+	if got := sendCommand(t, addr, "SET", "k", "123"); got != "+OK" {
+		t.Fatalf("overwrite within maxmemory -> %q", got)
+	}
+	if got := sendCommand(t, addr, "SET", "k", "1234"); got != "-OOM command not allowed when used memory > maxmemory" {
+		t.Fatalf("oversized overwrite -> %q", got)
+	}
+}
+
 func TestResourceLimitOptionsRejectNegativeValues(t *testing.T) {
 	if _, err := NewWithOptions(Options{MaxConnections: -1}); err == nil {
 		t.Fatal("MaxConnections negativo fue aceptado")
@@ -509,6 +528,12 @@ func TestInfoAndStatsExposeMetrics(t *testing.T) {
 	if got := sendCommand(t, addr, "SET", "obs", "ok"); got != "+OK" {
 		t.Fatalf("SET -> %q", got)
 	}
+	if got := sendCommand(t, addr, "GET", "obs"); got != "$2" {
+		t.Fatalf("GET hit -> %q", got)
+	}
+	if got := sendCommand(t, addr, "GET", "missing"); got != "$-1" {
+		t.Fatalf("GET miss -> %q", got)
+	}
 	info := sendBulkCommand(t, addr, "INFO")
 	for _, want := range []string{
 		"# Server",
@@ -516,6 +541,10 @@ func TestInfoAndStatsExposeMetrics(t *testing.T) {
 		"total_commands_processed:",
 		"used_memory_approx:",
 		"maxmemory:1024",
+		"keyspace_hits:1",
+		"keyspace_misses:1",
+		"oom_rejected_writes:0",
+		"keys:1",
 		"cmdstat_ping:calls=1",
 		"cmdstat_set:calls=1",
 	} {
@@ -601,6 +630,9 @@ func TestObservabilityOptionsRejectNegativeValues(t *testing.T) {
 	}
 	if _, err := NewWithOptions(Options{SlowLogMaxLen: -1}); err == nil {
 		t.Fatal("SlowLogMaxLen negativo fue aceptado")
+	}
+	if _, err := NewWithOptions(Options{CommandLog: "verbose"}); err == nil {
+		t.Fatal("CommandLog inválido fue aceptado")
 	}
 }
 

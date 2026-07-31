@@ -15,6 +15,7 @@ addr=127.0.0.1:1234
 save-interval=30s
 max_connections=20
 max_memory=1024
+command_log=slow
 slowlog-threshold=5ms
 shutdown_timeout=2s
 `), 0o644); err != nil {
@@ -27,7 +28,7 @@ shutdown_timeout=2s
 	if cfg.Addr != "127.0.0.1:1234" || cfg.SaveInterval != 30*time.Second || cfg.MaxConnections != 20 {
 		t.Fatalf("cfg = %#v", cfg)
 	}
-	if cfg.MaxMemoryBytes != 1024 || cfg.SlowLogThreshold != 5*time.Millisecond || cfg.ShutdownTimeout != 2*time.Second {
+	if cfg.MaxMemoryBytes != 1024 || cfg.CommandLog != "slow" || cfg.SlowLogThreshold != 5*time.Millisecond || cfg.ShutdownTimeout != 2*time.Second {
 		t.Fatalf("cfg = %#v", cfg)
 	}
 }
@@ -36,12 +37,20 @@ func TestApplyEnv(t *testing.T) {
 	t.Setenv("LLAVERO_ADDR", "127.0.0.1:7777")
 	t.Setenv("LLAVERO_REQUIREPASS", "secret")
 	t.Setenv("LLAVERO_READ_TIMEOUT", "10s")
+	t.Setenv("LLAVERO_COMMAND_LOG", "off")
 	cfg := Default()
 	if err := cfg.ApplyEnv(); err != nil {
 		t.Fatalf("ApplyEnv -> %v", err)
 	}
-	if cfg.Addr != "127.0.0.1:7777" || cfg.AuthPassword != "secret" || cfg.ReadTimeout != 10*time.Second {
+	if cfg.Addr != "127.0.0.1:7777" || cfg.AuthPassword != "secret" || cfg.ReadTimeout != 10*time.Second || cfg.CommandLog != "off" {
 		t.Fatalf("cfg = %#v", cfg)
+	}
+}
+
+func TestSetRejectsInvalidCommandLogMode(t *testing.T) {
+	var cfg Config
+	if err := cfg.Set("command_log", "verbose"); err == nil {
+		t.Fatal("Set aceptó command_log inválido")
 	}
 }
 

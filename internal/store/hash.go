@@ -25,14 +25,16 @@ func (s *Store) HSet(key, field string, val []byte) (bool, error) {
 	e, ok := sh.liveEntry(key, time.Now())
 	if !ok {
 		e = &entry{value: map[string][]byte{}}
-		sh.data[key] = e
+		sh.setEntry(key, e)
 	}
 	h, isHash := e.value.(map[string][]byte)
 	if !isHash {
 		return false, ErrWrongType
 	}
+	before := entryApproxMemory(key, e)
 	_, existed := h[field]
 	h[field] = val
+	sh.refreshEntryMemory(key, before)
 	return !existed, nil
 }
 
@@ -65,6 +67,7 @@ func (s *Store) HDel(key string, fields ...string) (int, error) {
 		return 0, ErrWrongType
 	}
 	n := 0
+	before := entryApproxMemory(key, e)
 	for _, f := range fields {
 		if _, exists := h[f]; exists {
 			delete(h, f)
@@ -72,7 +75,9 @@ func (s *Store) HDel(key string, fields ...string) (int, error) {
 		}
 	}
 	if len(h) == 0 {
-		delete(sh.data, key)
+		sh.deleteEntry(key)
+	} else {
+		sh.refreshEntryMemory(key, before)
 	}
 	return n, nil
 }

@@ -14,6 +14,22 @@ import (
 
 const defaultSlowLogMaxLen = 128
 
+const (
+	commandLogOff    = "off"
+	commandLogErrors = "errors"
+	commandLogSlow   = "slow"
+	commandLogAll    = "all"
+)
+
+func validCommandLogMode(mode string) bool {
+	switch mode {
+	case commandLogOff, commandLogErrors, commandLogSlow, commandLogAll:
+		return true
+	default:
+		return false
+	}
+}
+
 type metrics struct {
 	mu                  sync.Mutex
 	startedAt           time.Time
@@ -22,6 +38,12 @@ type metrics struct {
 	totalConnections    uint64
 	currentConnections  uint64
 	rejectedConnections uint64
+	keyspaceHits        uint64
+	keyspaceMisses      uint64
+	oomRejectedWrites   uint64
+	snapshotSuccesses   uint64
+	snapshotFailures    uint64
+	lastSnapshotMicros  int64
 	perCommand          map[string]uint64
 	nextSlowID          int64
 	slowLog             []slowEntry
@@ -68,6 +90,9 @@ func (s *Server) observeCommand(remote string, cmd protocol.Command, reply proto
 	if isErr {
 		s.metrics.totalErrors++
 	}
+	hits, misses := lookupStats(name, cmd.Args, reply)
+	s.metrics.keyspaceHits += hits
+	s.metrics.keyspaceMisses += misses
 	s.metrics.perCommand[name]++
 	if s.slowLogThreshold > 0 && duration >= s.slowLogThreshold && !isSlowLogReset(cmd) {
 		s.metrics.nextSlowID++
@@ -83,7 +108,78 @@ func (s *Server) observeCommand(remote string, cmd protocol.Command, reply proto
 	}
 	s.metrics.mu.Unlock()
 
-	log.Printf("event=command remote=%q cmd=%q duration_us=%d error=%t", remote, name, duration.Microseconds(), isErr)
+	if s.shouldLogCommand(isErr, duration) {
+		log.Printf("event=command remote=%q cmd=%q duration_us=%d error=%t", remote, name, duration.Microseconds(), isErr)
+	}
+}
+
+func lookupStats(name string, args [][]byte, reply protocol.Reply) (uint64, uint64) {
+	switch name {
+	case "GET":
+		if value, ok := reply.(protocol.BulkReply); ok {
+			if value.Null {
+				return 0, 1
+			}
+			return 1, 0
+		}
+	case "MGET":
+		if values, ok := reply.(protocol.ArrayReply); ok {
+			var hits, misses uint64
+			for _, item := range values.Elems {
+				value, ok := item.(protocol.BulkReply)
+				if !ok || value.Null {
+					misses++
+				} else {
+					hits++
+				}
+			}
+			return hits, misses
+		}
+	case "EXISTS":
+		if count, ok := reply.(protocol.IntReply); ok {
+			hits := uint64(count.N)
+			total := uint64(len(args))
+			if hits > total {
+				hits = total
+			}
+			return hits, total - hits
+		}
+	}
+	return 0, 0
+}
+
+func (s *Server) recordOOMRejectedWrite() {
+	s.metrics.mu.Lock()
+	s.metrics.oomRejectedWrites++
+	s.metrics.mu.Unlock()
+}
+
+func (s *Server) recordSnapshot(duration time.Duration, err error) {
+	s.metrics.recordSnapshot(duration, err)
+}
+
+func (m *metrics) recordSnapshot(duration time.Duration, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastSnapshotMicros = duration.Microseconds()
+	if err != nil {
+		m.snapshotFailures++
+		return
+	}
+	m.snapshotSuccesses++
+}
+
+func (s *Server) shouldLogCommand(isErr bool, duration time.Duration) bool {
+	switch s.commandLog {
+	case commandLogAll:
+		return true
+	case commandLogErrors:
+		return isErr
+	case commandLogSlow:
+		return s.slowLogThreshold > 0 && duration >= s.slowLogThreshold
+	default:
+		return false
+	}
 }
 
 func isSlowLogReset(cmd protocol.Command) bool {
@@ -111,12 +207,15 @@ func redactCommand(cmd protocol.Command) []string {
 	name := strings.ToUpper(cmd.Name)
 	out := make([]string, 0, len(cmd.Args)+1)
 	out = append(out, name)
-	for i, arg := range cmd.Args {
-		if name == "AUTH" && i == 0 {
+	for _, arg := range cmd.Args {
+		switch name {
+		case "INFO", "COMMAND", "CLIENT", "SELECT", "SLOWLOG":
+			out = append(out, string(arg))
+		default:
+			// Cache keys can contain tenant/user IDs and values can contain
+			// complete auth contexts. Keep only the command shape.
 			out = append(out, "<redacted>")
-			continue
 		}
-		out = append(out, string(arg))
 	}
 	return out
 }
@@ -143,6 +242,12 @@ func (s *Server) infoString() string {
 	totalConnections := s.metrics.totalConnections
 	currentConnections := s.metrics.currentConnections
 	rejectedConnections := s.metrics.rejectedConnections
+	keyspaceHits := s.metrics.keyspaceHits
+	keyspaceMisses := s.metrics.keyspaceMisses
+	oomRejectedWrites := s.metrics.oomRejectedWrites
+	snapshotSuccesses := s.metrics.snapshotSuccesses
+	snapshotFailures := s.metrics.snapshotFailures
+	lastSnapshotMicros := s.metrics.lastSnapshotMicros
 	perCommand := make(map[string]uint64, len(s.metrics.perCommand))
 	for k, v := range s.metrics.perCommand {
 		perCommand[k] = v
@@ -160,13 +265,22 @@ func (s *Server) infoString() string {
 	fmt.Fprintf(&b, "\n# Stats\n")
 	fmt.Fprintf(&b, "total_commands_processed:%d\n", totalCommands)
 	fmt.Fprintf(&b, "total_errors:%d\n", totalErrors)
+	fmt.Fprintf(&b, "keyspace_hits:%d\n", keyspaceHits)
+	fmt.Fprintf(&b, "keyspace_misses:%d\n", keyspaceMisses)
+	fmt.Fprintf(&b, "expired_keys:%d\n", s.store.ExpiredKeys())
+	fmt.Fprintf(&b, "oom_rejected_writes:%d\n", oomRejectedWrites)
 	fmt.Fprintf(&b, "\n# Memory\n")
 	fmt.Fprintf(&b, "used_memory_approx:%d\n", s.store.ApproxMemory())
 	fmt.Fprintf(&b, "maxmemory:%d\n", s.maxMemoryBytes)
+	fmt.Fprintf(&b, "\n# Keyspace\n")
+	fmt.Fprintf(&b, "keys:%d\n", s.store.Len())
 	fmt.Fprintf(&b, "\n# Persistence\n")
 	fmt.Fprintf(&b, "snapshot_enabled:%d\n", boolInt(s.snapshotPath != ""))
 	fmt.Fprintf(&b, "aof_enabled:%d\n", boolInt(s.aof != nil))
 	fmt.Fprintf(&b, "aof_fsync:%s\n", s.aofSync)
+	fmt.Fprintf(&b, "snapshot_successes:%d\n", snapshotSuccesses)
+	fmt.Fprintf(&b, "snapshot_failures:%d\n", snapshotFailures)
+	fmt.Fprintf(&b, "last_snapshot_duration_us:%d\n", lastSnapshotMicros)
 	fmt.Fprintf(&b, "\n# Commandstats\n")
 	names := make([]string, 0, len(perCommand))
 	for name := range perCommand {

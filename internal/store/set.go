@@ -25,13 +25,14 @@ func (s *Store) SAdd(key string, members ...[]byte) (int, error) {
 	e, ok := sh.liveEntry(key, time.Now())
 	if !ok {
 		e = &entry{value: map[string]struct{}{}}
-		sh.data[key] = e
+		sh.setEntry(key, e)
 	}
 	set, isSet := e.value.(map[string]struct{})
 	if !isSet {
 		return 0, ErrWrongType
 	}
 	n := 0
+	before := entryApproxMemory(key, e)
 	for _, m := range members {
 		member := string(m)
 		if _, exists := set[member]; !exists {
@@ -39,6 +40,7 @@ func (s *Store) SAdd(key string, members ...[]byte) (int, error) {
 			n++
 		}
 	}
+	sh.refreshEntryMemory(key, before)
 	return n, nil
 }
 
@@ -57,6 +59,7 @@ func (s *Store) SRem(key string, members ...[]byte) (int, error) {
 		return 0, ErrWrongType
 	}
 	n := 0
+	before := entryApproxMemory(key, e)
 	for _, m := range members {
 		member := string(m)
 		if _, exists := set[member]; exists {
@@ -65,7 +68,9 @@ func (s *Store) SRem(key string, members ...[]byte) (int, error) {
 		}
 	}
 	if len(set) == 0 {
-		delete(sh.data, key)
+		sh.deleteEntry(key)
+	} else {
+		sh.refreshEntryMemory(key, before)
 	}
 	return n, nil
 }

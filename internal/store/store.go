@@ -32,8 +32,10 @@ func (e *entry) expired(now time.Time) bool {
 
 // shard es una porción del almacén con su propio lock.
 type shard struct {
-	mu   sync.RWMutex
-	data map[string]*entry
+	mu          sync.RWMutex
+	data        map[string]*entry
+	usedMemory  int64
+	expiredKeys uint64
 }
 
 // liveEntry devuelve la entrada viva de key, borrando perezosamente si venció.
@@ -44,7 +46,8 @@ func (sh *shard) liveEntry(key string, now time.Time) (*entry, bool) {
 		return nil, false
 	}
 	if e.expired(now) {
-		delete(sh.data, key)
+		sh.deleteEntry(key)
+		sh.expiredKeys++
 		return nil, false
 	}
 	return e, true
@@ -91,7 +94,7 @@ func (s *Store) Set(key string, val []byte) {
 	sh := s.shardFor(key)
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
-	sh.data[key] = &entry{value: val}
+	sh.setEntry(key, &entry{value: val})
 }
 
 // SetEx guarda un valor string con una expiración absoluta, de forma atómica,
@@ -105,7 +108,7 @@ func (s *Store) SetEx(key string, val []byte, expireAt time.Time) {
 	if !expireAt.IsZero() {
 		e.expireAt = expireAt
 	}
-	sh.data[key] = e
+	sh.setEntry(key, e)
 }
 
 // Get devuelve el valor string de una clave. exists=false si no existe;
@@ -144,8 +147,12 @@ func (s *Store) Del(key string) bool {
 	if !ok {
 		return false
 	}
-	delete(sh.data, key)
-	return !e.expired(time.Now())
+	sh.deleteEntry(key)
+	if e.expired(time.Now()) {
+		sh.expiredKeys++
+		return false
+	}
+	return true
 }
 
 // Expire fija una expiración relativa para una clave existente. Devuelve si la
@@ -227,7 +234,8 @@ func expireShard(sh *shard) {
 			}
 			sampled++
 			if e.expired(now) {
-				delete(sh.data, key)
+				sh.deleteEntry(key)
+				sh.expiredKeys++
 				expired++
 			}
 			if sampled >= expireSampleSize {

@@ -38,7 +38,8 @@ func (s *Store) Snapshot() []SnapshotEntry {
 	for _, sh := range s.shards {
 		for key, e := range sh.data {
 			if e.expired(now) {
-				delete(sh.data, key)
+				sh.deleteEntry(key)
+				sh.expiredKeys++
 				continue
 			}
 			entry, ok := snapshotEntry(key, e)
@@ -79,6 +80,7 @@ func (s *Store) Restore(entries []SnapshotEntry) error {
 	for _, sh := range s.shards {
 		sh.mu.Lock()
 		sh.data = make(map[string]*entry)
+		sh.usedMemory = 0
 		sh.mu.Unlock()
 	}
 
@@ -96,7 +98,7 @@ func (s *Store) Restore(entries []SnapshotEntry) error {
 		}
 		sh := s.shardFor(snap.Key)
 		sh.mu.Lock()
-		sh.data[snap.Key] = &entry{value: val, expireAt: snap.ExpireAt}
+		sh.setEntry(snap.Key, &entry{value: val, expireAt: snap.ExpireAt})
 		sh.mu.Unlock()
 	}
 	return nil

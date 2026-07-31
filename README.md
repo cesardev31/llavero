@@ -54,6 +54,8 @@ go run ./cmd/llavero \
 - `-write-timeout`: timeout de escritura por respuesta/pubsub. `0` lo desactiva.
 - `-max-memory`: límite aproximado de bytes para claves y valores vivos. `0`
   lo desactiva.
+- `-command-log`: controla el log por comando: `off`, `errors`, `slow` o
+  `all`. El valor por defecto es `errors`; usa `all` solo para diagnóstico.
 - `-slowlog-threshold`: latencia mínima para registrar comandos lentos. `0` lo
   desactiva.
 - `-slowlog-max-len`: máximo de entradas retenidas en `SLOWLOG`.
@@ -102,8 +104,14 @@ go run ./cmd/llavero \
   -read-timeout 30s \
   -write-timeout 5s \
   -max-memory 1073741824 \
+  -command-log errors \
   -slowlog-threshold 10ms
 ```
+
+`INFO` y `STATS` exponen conexiones, memoria aproximada, cantidad de claves,
+hits/misses, expiraciones, escrituras rechazadas por memoria y resultados de
+snapshots. `SLOWLOG` conserva la forma de los comandos, pero redacta claves y
+valores de caché.
 
 ## CLI
 

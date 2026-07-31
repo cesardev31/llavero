@@ -19,6 +19,7 @@ write_timeout=5s
 max_memory=0
 
 # Observabilidad.
+command_log=errors
 slowlog_threshold=10ms
 slowlog_max_len=128
 shutdown_timeout=5s

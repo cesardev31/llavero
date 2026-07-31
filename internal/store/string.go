@@ -31,13 +31,15 @@ func (s *Store) IncrBy(key string, delta int64) (int64, error) {
 		n = parsed
 	} else {
 		e = &entry{}
-		sh.data[key] = e
+		sh.setEntry(key, e)
 	}
 	if (delta > 0 && n > math.MaxInt64-delta) || (delta < 0 && n < math.MinInt64-delta) {
 		return 0, ErrNotInteger
 	}
 	n += delta
+	before := entryApproxMemory(key, e)
 	e.value = []byte(strconv.FormatInt(n, 10))
+	sh.refreshEntryMemory(key, before)
 	return n, nil
 }
 
@@ -49,6 +51,6 @@ func (s *Store) SetNX(key string, val []byte) bool {
 	if _, ok := sh.liveEntry(key, time.Now()); ok {
 		return false
 	}
-	sh.data[key] = &entry{value: val}
+	sh.setEntry(key, &entry{value: val})
 	return true
 }

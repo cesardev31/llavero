@@ -49,6 +49,7 @@ type Server struct {
 	readTimeout      time.Duration
 	writeTimeout     time.Duration
 	maxMemoryBytes   int64
+	commandLog       string
 	metrics          *metrics
 	slowLogThreshold time.Duration
 	slowLogMaxLen    int
@@ -70,6 +71,7 @@ type Options struct {
 	ReadTimeout      time.Duration
 	WriteTimeout     time.Duration
 	MaxMemoryBytes   int64
+	CommandLog       string
 	SlowLogThreshold time.Duration
 	SlowLogMaxLen    int
 	ShutdownTimeout  time.Duration
@@ -97,6 +99,12 @@ func NewWithOptions(opts Options) (*Server, error) {
 	}
 	if opts.MaxMemoryBytes < 0 {
 		return nil, errors.New("MaxMemoryBytes must not be negative")
+	}
+	if opts.CommandLog == "" {
+		opts.CommandLog = commandLogErrors
+	}
+	if !validCommandLogMode(opts.CommandLog) {
+		return nil, errors.New("CommandLog must be one of off, errors, slow or all")
 	}
 	if opts.SlowLogThreshold < 0 {
 		return nil, errors.New("SlowLogThreshold must not be negative")
@@ -146,10 +154,14 @@ func NewWithOptions(opts Options) (*Server, error) {
 		}
 		aofSync = policy
 	}
+	serverMetrics := newMetrics()
 	disp := command.NewDispatcher()
 	if opts.SnapshotPath != "" {
 		disp = command.NewDispatcherWithSave(func(s *store.Store) error {
-			return persistence.Save(opts.SnapshotPath, s)
+			start := time.Now()
+			err := persistence.Save(opts.SnapshotPath, s)
+			serverMetrics.recordSnapshot(time.Since(start), err)
+			return err
 		})
 	}
 	return &Server{
@@ -172,7 +184,8 @@ func NewWithOptions(opts Options) (*Server, error) {
 		readTimeout:      opts.ReadTimeout,
 		writeTimeout:     opts.WriteTimeout,
 		maxMemoryBytes:   opts.MaxMemoryBytes,
-		metrics:          newMetrics(),
+		commandLog:       opts.CommandLog,
+		metrics:          serverMetrics,
 		slowLogThreshold: opts.SlowLogThreshold,
 		slowLogMaxLen:    slowLogMaxLen,
 		shutdownTimeout:  opts.ShutdownTimeout,
@@ -291,7 +304,10 @@ func (s *Server) Save() error {
 	if s.snapshotPath == "" {
 		return nil
 	}
-	return persistence.Save(s.snapshotPath, s.store)
+	start := time.Now()
+	err := persistence.Save(s.snapshotPath, s.store)
+	s.recordSnapshot(time.Since(start), err)
+	return err
 }
 
 // Serve lanza la expiración activa y acepta conexiones (una goroutine por una).
@@ -360,7 +376,7 @@ func (s *Server) saveLoop() {
 		case <-s.stop:
 			return
 		case <-t.C:
-			if err := persistence.Save(s.snapshotPath, s.store); err != nil {
+			if err := s.Save(); err != nil {
 				log.Printf("failed to save snapshot: %v", err)
 			}
 		}

@@ -15,6 +15,7 @@ func (s *Server) dispatchWithAOF(cmd protocol.Command) protocol.Reply {
 		s.mutationMu.Lock()
 		defer s.mutationMu.Unlock()
 		if s.memoryLimitExceeded(logCmd) {
+			s.recordOOMRejectedWrite()
 			return protocol.ErrorReply{Msg: "OOM command not allowed when used memory > maxmemory"}
 		}
 		return s.dispatchMutatingLocked(cmd, logCmd)
@@ -42,11 +43,32 @@ func (s *Server) dispatchMutatingLocked(cmd, logCmd protocol.Command) protocol.R
 }
 
 func (s *Server) memoryLimitExceeded(cmd protocol.Command) bool {
-	growth := estimatedGrowth(cmd)
+	growth := s.estimatedGrowth(cmd)
 	if growth <= 0 {
 		return false
 	}
 	return s.store.ApproxMemory()+growth > s.maxMemoryBytes
+}
+
+func (s *Server) estimatedGrowth(cmd protocol.Command) int64 {
+	growth := estimatedGrowth(cmd)
+	name := strings.ToUpper(cmd.Name)
+	args := cmd.Args
+	switch name {
+	case "SET":
+		if len(args) >= 2 {
+			return growth - s.store.EntryMemory(string(args[0]))
+		}
+	case "SETNX":
+		if len(args) >= 2 && s.store.EntryMemory(string(args[0])) > 0 {
+			return 0
+		}
+	case "MSET":
+		for i := 0; i+1 < len(args); i += 2 {
+			growth -= s.store.EntryMemory(string(args[i]))
+		}
+	}
+	return growth
 }
 
 func estimatedGrowth(cmd protocol.Command) int64 {
